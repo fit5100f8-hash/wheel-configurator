@@ -906,10 +906,10 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   let thumbKey = "", thumbQueued = false;
   function drawThumbs() {
     thumbQueued = false;
-    const key = [state.color, state.custom, state.finish, state.forge, state.size, state.pcd, state.cb].join("|");
+    const key = [state.color, state.custom, state.finish, state.forge, state.style, state.size, state.pcd, state.cb].join("|");
     if (key === thumbKey) return; // 只有會影響外觀的選項改變才重畫
     thumbKey = key;
-    const mainCtx = ctx, styleNow = state.style;
+    const mainCtx = ctx, styleNow = state.style, forgeNow = state.forge;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     try {
       thumbs.forEach(({ id, cv }) => {
@@ -919,151 +919,171 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
         state.style = id;
         renderWheel(size, 1.32, 0, 0); // 放大到輪框填滿縮圖
       });
+      state.style = styleNow;
+      // 分解圖用的輪面：依各工法畫一張正面圖（目前的款式、顏色、表面處理）
+      forgeDiagrams.forEach(d => {
+        const w = Math.round((d.cv.clientWidth || 132) * dpr);
+        const size = Math.max(96, Math.round(w * 0.8));
+        if (!d.face) d.face = document.createElement("canvas");
+        if (d.face.width !== size) { d.face.width = size; d.face.height = size; }
+        ctx = d.face.getContext("2d");
+        state.forge = d.id;
+        const unit = (size * 0.46) / (TIRE_MM / 2);
+        const rFlange = (state.size * INCH / 2 + 13) * unit;
+        renderWheel(size, (size / 2) / rFlange, 0, 0, d.id === "mono" ? "front" : "face"); // 輪框外緣剛好貼齊圖邊
+      });
     } finally {
       ctx = mainCtx;
       state.style = styleNow;
+      state.forge = forgeNow;
     }
-    forgeDiagrams.forEach(({ id, cv }) => {
+    forgeDiagrams.forEach(({ id, cv, face }) => {
       const w = Math.round((cv.clientWidth || 132) * dpr), h = Math.round(w * 0.75);
       if (cv.width !== w) { cv.width = w; cv.height = h; }
-      drawForgeDiagram(cv.getContext("2d"), w, h, id, dpr);
+      drawForgeDiagram(cv.getContext("2d"), w, h, id, face);
     });
   }
 
-  // ---------- 鍛造工法分解圖：側面透視，零件沿輪軸方向拉開 ----------
-  function drawForgeDiagram(c, W, H, kind, dpr) {
-    // 斜 45° 的分解圖：輪軸由左上往右下，零件沿輪軸拉開
+  // ---------- 鍛造工法分解圖：斜 45° 視角，零件沿輪軸方向拉開 ----------
+  // 輪桶剖面輪廓：[沿輪軸位置 0..1, 半徑比例]，前後凸緣、胎唇座、中間的落井
+  const BARREL_PROFILE = [[0, 1.07], [0.035, 1.07], [0.06, 1.0], [0.16, 1.0], [0.24, 0.9], [0.62, 0.9], [0.72, 1.0], [0.94, 1.0], [0.965, 1.07], [1, 1.07]];
+  const LIP_PROFILE = [[0, 1.07], [0.35, 1.07], [0.55, 1.0], [1, 0.98]];
+  function drawForgeDiagram(c, W, H, kind, faceImg) {
     const TH = 32 * Math.PI / 180;               // 輪軸方向
     const ux = Math.cos(TH), uy = Math.sin(TH);  // 沿輪軸
-    const vx = -Math.sin(TH), vy = Math.cos(TH); // 垂直輪軸（輪圈的直徑方向）
+    const vx = -Math.sin(TH), vy = Math.cos(TH); // 垂直輪軸（直徑方向）
     const K = 0.42;                               // 透視壓縮：圓看成橢圓的比例
     const base = currentColor();
-    const SILVER = "#c4c9d0", DARK = "#16181c";
+    const SILVER = "#c9ced5", BARREL = "#a7adb6";
 
     // 各工法的零件（位置與深度以輪圈半徑 R 為單位）
     const parts = {
-      mono: [{ type: "wheel", t0: 0, t1: 0.95, label: "一體成形" }],
-      two: [
-        { type: "face", t0: 0, label: "輪面" },
-        { type: "barrel", t0: 0.85, t1: 1.8, label: "輪桶" },
-      ],
-      three: [
-        { type: "lip", t0: 0, t1: 0.2, label: "外唇" },
-        { type: "face", t0: 0.72, label: "輪面" },
-        { type: "barrel", t0: 1.2, t1: 1.95, label: "內桶" },
-      ],
+      mono: [{ type: "wheel", t0: 0, t1: 0.95 }],
+      two: [{ type: "face", t0: 0 }, { type: "barrel", t0: 0.85, t1: 1.8 }],
+      three: [{ type: "lip", t0: 0, t1: 0.22 }, { type: "face", t0: 0.7 }, { type: "barrel", t0: 1.2, t1: 1.95 }],
     }[kind];
     const span = Math.max(...parts.map(p => p.t1 ?? p.t0));
-
-    // 依畫布大小算出 R，讓整組圖剛好放得下
-    const hx = Math.sqrt((K * ux) ** 2 + (vx) ** 2), hy = Math.sqrt((K * uy) ** 2 + (vy) ** 2);
-    const padTop = 0.04;
-    const R = Math.min(W * 0.92 / (span * ux + 2 * hx), H * (0.9 - padTop) / (span * uy + 2 * hy));
-    const ox = W / 2 - span * R * ux / 2, oy = H / 2 - span * R * uy / 2 + H * padTop / 2;
+    const hx = Math.sqrt((K * 1.07 * ux) ** 2 + (1.07 * vx) ** 2), hy = Math.sqrt((K * 1.07 * uy) ** 2 + (1.07 * vy) ** 2);
+    const R = Math.min(W * 0.9 / (span * ux + 2 * hx), H * 0.82 / (span * uy + 2 * hy));
+    const ox = W / 2 - span * R * ux / 2, oy = H * 0.47 - span * R * uy / 2;
     const P = t => [ox + ux * t * R, oy + uy * t * R];
+    const lw = Math.max(1, R / 70);
 
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.clearRect(0, 0, W, H);
-    const lw = Math.max(1, R / 60);
-    const ell = (t, rr) => { const [x, y] = P(t); c.beginPath(); c.ellipse(x, y, rr * K * R, rr * R, TH, 0, Math.PI * 2); };
+    const ell = (t, rr, cc = c) => { const [x, y] = P(t); cc.beginPath(); cc.ellipse(x, y, rr * K * R, rr * R, TH, 0, Math.PI * 2); };
 
-    function metal(body, t) { // 沿直徑方向的金屬漸層
+    // 地面陰影
+    {
+      const [x0, y0] = P(0), [x1, y1] = P(span);
+      const gx = (x0 + x1) / 2, gy = Math.max(y0, y1) + R * 1.0;
+      c.save(); c.translate(gx, gy); c.scale(1, 0.18);
+      const g = c.createRadialGradient(0, 0, 0, 0, 0, (span * ux * R) / 2 + R);
+      g.addColorStop(0, "rgba(0,0,0,0.28)"); g.addColorStop(1, "rgba(0,0,0,0)");
+      c.fillStyle = g; c.beginPath(); c.arc(0, 0, (span * ux * R) / 2 + R, 0, Math.PI * 2); c.fill();
+      c.restore();
+    }
+
+    // 金屬漸層：沿直徑方向，上亮下暗，中間一道反光
+    function metal(cc, body, t, rr, strong) {
       const [x, y] = P(t);
-      const g = c.createLinearGradient(x - vx * R, y - vy * R, x + vx * R, y + vy * R);
-      g.addColorStop(0, shade(body, 0.55)); g.addColorStop(0.25, shade(body, 0.2)); g.addColorStop(0.55, shade(body, -0.25));
-      g.addColorStop(0.8, shade(body, 0.1)); g.addColorStop(1, shade(body, -0.45));
+      const g = cc.createLinearGradient(x - vx * R * rr, y - vy * R * rr, x + vx * R * rr, y + vy * R * rr);
+      const s = strong ? 1 : 0.7;
+      g.addColorStop(0, shade(body, 0.6 * s)); g.addColorStop(0.12, shade(body, 0.25 * s));
+      g.addColorStop(0.3, shade(body, 0.75 * s)); g.addColorStop(0.38, shade(body, 0.1));
+      g.addColorStop(0.7, shade(body, -0.35 * s)); g.addColorStop(0.88, shade(body, 0.05)); g.addColorStop(1, shade(body, -0.5));
       return g;
     }
-    // 圓筒（輪桶／外唇）：後緣、筒身、前緣、內孔
+
+    // 依剖面輪廓畫筒狀零件（輪桶／外唇）：由後往前一段一段畫；前孔挖空才看得到後面的零件
     let layer = null;
-    function tube(t0, t1, body, hole, lipAtBack) {
-      // 先畫在暫存圖層，挖空「從前孔穿過後孔看得到」的部分，再貼回去，才能看穿到後面的零件
+    function tube(t0, t1, body, profile, holeR, bolts) {
       if (!layer || layer.width !== W || layer.height !== H) { layer = document.createElement("canvas"); layer.width = W; layer.height = H; }
-      const main = c;
-      c = layer.getContext("2d");
-      c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, W, H);
-      try { tubeBody(t0, t1, body, hole, lipAtBack); } finally { c = main; }
+      const L = layer.getContext("2d");
+      L.setTransform(1, 0, 0, 1, 0, 0); L.clearRect(0, 0, W, H);
+      const pts = profile.map(([f, r]) => [t0 + (t1 - t0) * f, r]);
+      // 後緣
+      const [tb, rb] = pts[pts.length - 1];
+      ell(tb, rb, L); L.fillStyle = shade(body, -0.35); L.fill();
+      // 筒身：每一段是兩個橢圓之間的側面
+      for (let i = pts.length - 1; i > 0; i--) {
+        const [ta, ra] = pts[i - 1], [tz, rz] = pts[i];
+        const [xa, ya] = P(ta), [xz, yz] = P(tz);
+        L.beginPath();
+        L.moveTo(xa + vx * R * ra, ya + vy * R * ra); L.lineTo(xz + vx * R * rz, yz + vy * R * rz);
+        L.lineTo(xz - vx * R * rz, yz - vy * R * rz); L.lineTo(xa - vx * R * ra, ya - vy * R * ra); L.closePath();
+        L.fillStyle = metal(L, body, (ta + tz) / 2, Math.max(ra, rz), ra !== rz);
+        L.fill();
+        // 斜面（半徑變化處）加深或提亮，看得出凸緣與落井的立體感
+        if (ra !== rz) { L.fillStyle = ra > rz ? "rgba(0,0,0,0.18)" : "rgba(255,255,255,0.12)"; L.fill(); }
+        // 段落交界的細線
+        const [xs, ys] = P(ta);
+        L.beginPath(); L.ellipse(xs, ys, ra * K * R, ra * R, TH, -Math.PI / 2, Math.PI / 2, true);
+        L.strokeStyle = "rgba(255,255,255,0.28)"; L.lineWidth = lw * 0.8; L.stroke();
+      }
+      // 前緣：拋光唇邊
+      const [tf, rf] = pts[0];
+      ell(tf, rf, L);
+      const [fx, fy] = P(tf);
+      const lipG = L.createLinearGradient(fx - vx * R, fy - vy * R, fx + vx * R, fy + vy * R);
+      lipG.addColorStop(0, "#ffffff"); lipG.addColorStop(0.3, "#dfe3e8"); lipG.addColorStop(0.55, "#9aa1aa");
+      lipG.addColorStop(0.8, "#e9ecef"); lipG.addColorStop(1, "#7d838c");
+      L.fillStyle = lipG; L.fill();
+      L.strokeStyle = "rgba(0,0,0,0.3)"; L.lineWidth = lw; L.stroke();
+      if (bolts) boltRing(L, tf, (rf + holeR) / 2);
+      // 前孔：看得到的筒壁（上暗下亮），重疊部分挖空
+      const wall = L.createLinearGradient(fx - vx * R, fy - vy * R, fx + vx * R, fy + vy * R);
+      wall.addColorStop(0, shade(body, -0.6)); wall.addColorStop(0.6, shade(body, -0.15)); wall.addColorStop(1, shade(body, 0.2));
+      ell(tf, holeR, L); L.fillStyle = wall; L.fill();
+      L.save();
+      const minR = Math.min(...pts.map(p => p[1])) * holeR / rf;
+      ell(tb, minR, L); L.clip();
+      L.globalCompositeOperation = "destination-out";
+      ell(tf, holeR, L); L.fill();
+      L.restore();
       c.drawImage(layer, 0, 0);
     }
-    function tubeBody(t0, t1, body, hole, lipAtBack) {
-      const [x0, y0] = P(t0), [x1, y1] = P(t1);
-      ell(t1, lipAtBack ? 1.04 : 1); c.fillStyle = shade(body, -0.35); c.fill();
-      c.beginPath();
-      c.moveTo(x0 + vx * R, y0 + vy * R); c.lineTo(x1 + vx * R, y1 + vy * R);
-      c.lineTo(x1 - vx * R, y1 - vy * R); c.lineTo(x0 - vx * R, y0 - vy * R); c.closePath();
-      c.fillStyle = metal(body, (t0 + t1) / 2); c.fill();
-      // 筒身上的凹槽線，增加金屬輪桶的質感
-      c.strokeStyle = "rgba(255,255,255,0.35)"; c.lineWidth = lw;
-      [0.3, 0.55].forEach(f => {
-        const t = t0 + (t1 - t0) * f, [x, y] = P(t);
-        c.beginPath(); c.ellipse(x, y, K * R, R, TH, -Math.PI / 2, Math.PI / 2, true); c.stroke();
-      });
-      ell(t0, 1.04); c.fillStyle = metal(SILVER, t0); c.fill();             // 前緣唇邊
-      c.strokeStyle = "rgba(0,0,0,0.35)"; c.lineWidth = lw; c.stroke();
-      if (hole) {
-        // 前孔內看得到的筒壁（上方較亮、下方較暗）
-        const [x, y] = P(t0);
-        const wall = c.createLinearGradient(x - vx * R, y - vy * R, x + vx * R, y + vy * R);
-        wall.addColorStop(0, shade(body, -0.55)); wall.addColorStop(1, shade(body, 0.05));
-        ell(t0, hole); c.fillStyle = wall; c.fill();
-        // 前孔與後孔重疊的部分是空的：挖掉
-        c.save();
-        ell(t1, hole); c.clip();
-        c.globalCompositeOperation = "destination-out";
-        ell(t0, hole); c.fill();
+
+    // 輪面：用正面擬真圖壓成透視橢圓；後面疊幾層暗色當作厚度
+    let darkFace = null;
+    function face(t, rr) {
+      if (!faceImg) return;
+      if (!darkFace || darkFace.width !== faceImg.width) { darkFace = document.createElement("canvas"); darkFace.width = darkFace.height = faceImg.width; }
+      const D = darkFace.getContext("2d");
+      D.globalCompositeOperation = "source-over"; D.clearRect(0, 0, darkFace.width, darkFace.width);
+      D.drawImage(faceImg, 0, 0);
+      D.globalCompositeOperation = "source-atop"; D.fillStyle = "rgba(10,11,13,0.62)"; D.fillRect(0, 0, darkFace.width, darkFace.width);
+      const [x, y] = P(t), half = rr * R;
+      const layers = Math.max(3, Math.round(R * 0.07 / lw));
+      for (let i = layers; i >= 0; i--) {
+        const d = (i / layers) * 0.07 * R;
+        c.save(); c.translate(x + ux * d, y + uy * d); c.rotate(TH); c.scale(K, 1);
+        c.drawImage(i ? darkFace : faceImg, -half, -half, half * 2, half * 2);
         c.restore();
       }
     }
-    // 輪面：五爪碟片，帶一點厚度
-    function face(t, rr) {
+
+    // 組裝螺絲（外唇前緣一圈）
+    function boltRing(cc, t, rr) {
       const [x, y] = P(t);
-      [0.06, 0].forEach((dt, i) => {
-        c.save(); c.translate(x + ux * dt * R, y + uy * dt * R); c.rotate(TH); c.scale(K, 1);
-        const col = i === 0 ? shade(base, -0.45) : base;
-        // 外圈
-        c.beginPath(); c.arc(0, 0, rr * R, 0, Math.PI * 2); c.arc(0, 0, rr * R * 0.86, 0, Math.PI * 2, true);
-        c.fillStyle = col; c.fill();
-        // 五爪
-        for (let s = 0; s < 5; s++) {
-          const a = -Math.PI / 2 + s * Math.PI * 2 / 5, px = -Math.sin(a), py = Math.cos(a);
-          const w0 = rr * R * 0.3, w1 = rr * R * 0.18, r0 = rr * R * 0.22, r1 = rr * R * 0.9;
-          c.beginPath();
-          c.moveTo(Math.cos(a) * r0 + px * w0 / 2, Math.sin(a) * r0 + py * w0 / 2);
-          c.lineTo(Math.cos(a) * r1 + px * w1 / 2, Math.sin(a) * r1 + py * w1 / 2);
-          c.lineTo(Math.cos(a) * r1 - px * w1 / 2, Math.sin(a) * r1 - py * w1 / 2);
-          c.lineTo(Math.cos(a) * r0 - px * w0 / 2, Math.sin(a) * r0 - py * w0 / 2);
-          c.closePath(); c.fillStyle = col; c.fill();
-        }
-        c.beginPath(); c.arc(0, 0, rr * R * 0.3, 0, Math.PI * 2); c.fillStyle = i ? shade(base, 0.2) : col; c.fill();
-        if (i) {
-          c.fillStyle = DARK;
-          for (let s = 0; s < 5; s++) {
-            const a = -Math.PI / 2 + Math.PI / 5 + s * Math.PI * 2 / 5;
-            c.beginPath(); c.arc(Math.cos(a) * rr * R * 0.19, Math.sin(a) * rr * R * 0.19, rr * R * 0.035, 0, Math.PI * 2); c.fill();
-          }
-          c.beginPath(); c.arc(0, 0, rr * R * 0.09, 0, Math.PI * 2); c.fill();
-          // 受光的亮邊
-          c.beginPath(); c.arc(0, 0, rr * R, Math.PI * 0.9, Math.PI * 1.6); c.strokeStyle = "rgba(255,255,255,0.6)"; c.lineWidth = lw * 1.5 / K; c.stroke();
-        }
-        c.restore();
-      });
-    }
-    // 外唇上的一圈組裝螺絲
-    function boltRing(t, rr) {
-      const [x, y] = P(t);
-      for (let i = 0; i < 28; i++) {
-        const phi = i * Math.PI * 2 / 28;
+      const n = 30;
+      for (let i = 0; i < n; i++) {
+        const phi = i * Math.PI * 2 / n;
         const bx = x + ux * Math.cos(phi) * K * rr * R + vx * Math.sin(phi) * rr * R;
         const by = y + uy * Math.cos(phi) * K * rr * R + vy * Math.sin(phi) * rr * R;
-        c.beginPath(); c.arc(bx, by, Math.max(0.8, R * 0.022), 0, Math.PI * 2);
-        c.fillStyle = Math.cos(phi) < 0 ? "#f2f4f7" : "#8d939c"; c.fill();
+        const br = Math.max(0.9, R * 0.024);
+        cc.beginPath(); cc.arc(bx + br * 0.3, by + br * 0.4, br, 0, Math.PI * 2); cc.fillStyle = "rgba(0,0,0,0.35)"; cc.fill();
+        const g = cc.createRadialGradient(bx - br * 0.3, by - br * 0.3, 0, bx, by, br);
+        g.addColorStop(0, "#ffffff"); g.addColorStop(1, "#7e848d");
+        cc.beginPath(); cc.arc(bx, by, br, 0, Math.PI * 2); cc.fillStyle = g; cc.fill();
       }
     }
-    // 零件之間的組裝虛線
+
+    // 零件之間的組裝虛線（沿輪軸）
     function guides(ta, tb) {
-      c.save(); c.setLineDash([R * 0.08, R * 0.06]);
-      c.strokeStyle = "rgba(127,127,127,0.75)"; c.lineWidth = lw;
-      [-0.62, 0.62].forEach(f => {
+      c.save(); c.setLineDash([R * 0.07, R * 0.05]);
+      c.strokeStyle = "rgba(127,127,127,0.7)"; c.lineWidth = lw;
+      [-0.7, 0, 0.7].forEach(f => {
         const [xa, ya] = P(ta), [xb, yb] = P(tb);
         c.beginPath(); c.moveTo(xa + vx * f * R, ya + vy * f * R); c.lineTo(xb + vx * f * R, yb + vy * f * R); c.stroke();
       });
@@ -1071,13 +1091,13 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     }
 
     // 由後往前畫，前面的零件蓋住後面
-    if (kind === "two") guides(0, 0.85);
-    if (kind === "three") guides(0.1, 1.2);
+    if (kind === "two") guides(0.05, 0.85);
+    if (kind === "three") guides(0.05, 1.2);
     [...parts].reverse().forEach(p => {
-      if (p.type === "barrel") tube(p.t0, p.t1, "#9aa1ab", 0.88, true);
-      else if (p.type === "lip") { tube(p.t0, p.t1, SILVER, 0.88, false); boltRing(p.t0, 0.95); }
-      else if (p.type === "face") face(p.t0, 0.86);
-      else if (p.type === "wheel") { tube(p.t0, p.t1, base, 0, true); face(p.t0 + 0.04, 0.95); }
+      if (p.type === "barrel") tube(p.t0, p.t1, BARREL, BARREL_PROFILE, 0.9, false);
+      else if (p.type === "lip") tube(p.t0, p.t1, SILVER, LIP_PROFILE, 0.86, true);
+      else if (p.type === "face") face(p.t0, 0.9);
+      else if (p.type === "wheel") { tube(p.t0, p.t1, base, BARREL_PROFILE, 0.9, false); face(p.t0 + 0.005, 1.07); }
     });
   }
   function queueThumbs() {
@@ -1086,7 +1106,9 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     requestAnimationFrame(drawThumbs);
   }
 
-  function renderWheel(W, zoom, panX, panY) {
+  // mode："full" 完整預覽；"face" 只畫輪面（透明背景，給雙片／三片分解圖）；"front" 不畫輪胎與剎車碟（給單片分解圖）
+  function renderWheel(W, zoom, panX, panY, mode = "full") {
+    const full = mode === "full", faceOnly = mode === "face";
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, W);
     ctx.translate(W / 2 + panX * W, W / 2 + panY * W);
@@ -1111,6 +1133,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     const hl = { matte: 0.1, brushed: 0.22, carbon: 0.2, chrome: 0.62, anodized: 0.3 }[fin] ?? 0.34;
 
     // 1. 地面陰影與輪胎
+    if (full) {
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.35)"; ctx.shadowBlur = mm(30); ctx.shadowOffsetY = mm(14);
     disc(rTire); ctx.fillStyle = "#151619"; ctx.fill();
@@ -1133,8 +1156,14 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
       ctx.fillRect(rTire - mm(9), -mm(2.2), mm(9), mm(4.4));
       ctx.restore();
     }
+    }
 
-    // 2. 輪框凸緣與唇邊
+    // 2. 輪框凸緣與唇邊（只畫輪面時改成輪面外圈）
+    if (faceOnly) {
+      ring(rEnd - mm(13), rEnd + mm(1));
+      ctx.fillStyle = metalSweep(base, matte ? 0.12 : 0.38); ctx.fill();
+      ring(rEnd - mm(1), rEnd + mm(1)); ctx.fillStyle = "rgba(255,255,255,0.25)"; ctx.fill();
+    } else {
     const lipBase = machined || state.forge === "three" ? "#c3c8cf" : base;
     const lipStrength = state.forge === "three" ? 0.42 : matte ? 0.12 : chrome ? 0.7 : brushed ? 0.28 : 0.42;
     ring(rLipIn, rFlange); ctx.fillStyle = metalSweep(lipBase, lipStrength); ctx.fill();
@@ -1153,15 +1182,20 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
       ring(rLipIn - mm(1), rLipIn + mm(1)); ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fill(); // 外唇接縫
     }
 
+    }
+
     // 3. 內桶（上方受光、下方陰影）
+    if (!faceOnly) {
     const barrel = ctx.createLinearGradient(0, -rLipIn, 0, rLipIn);
     barrel.addColorStop(0, shade(base, -0.35)); barrel.addColorStop(0.5, shade(base, -0.7)); barrel.addColorStop(1, shade(base, -0.85));
     disc(rLipIn - mm(5)); ctx.fillStyle = barrel; ctx.fill();
     const depth = ctx.createRadialGradient(0, 0, rLipIn * 0.55, 0, 0, rLipIn);
     depth.addColorStop(0, "rgba(0,0,0,0.75)"); depth.addColorStop(1, "rgba(0,0,0,0.1)");
     disc(rLipIn - mm(5)); ctx.fillStyle = depth; ctx.fill();
+    }
 
     // 4. 剎車碟（打孔）
+    if (full) {
     const rRotor = Math.min(rLipIn - mm(28), mm(175));
     const rotor = ctx.createRadialGradient(-rRotor * 0.3, -rRotor * 0.3, rRotor * 0.1, 0, 0, rRotor);
     rotor.addColorStop(0, "#8d9198"); rotor.addColorStop(0.7, "#5f636a"); rotor.addColorStop(1, "#3c3f44");
@@ -1177,15 +1211,18 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
       });
     }
     disc(rRotor * 0.52); ctx.fillStyle = "#2a2c30"; ctx.fill(); // 碟盤帽
+    }
 
     // 5. 輻條：先投影，再畫立體本體
     const spokes = buildSpokes(rHub, rEnd, unit);
     ctx.save();
     ctx.beginPath(); ctx.arc(0, 0, rLipIn, 0, Math.PI * 2); ctx.clip();
-    ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = mm(12); ctx.shadowOffsetX = mm(5); ctx.shadowOffsetY = mm(8);
-    traceAll(spokes); ctx.fillStyle = shade(base, -0.6); ctx.fill();
-    ctx.restore();
+    if (!faceOnly) {
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = mm(12); ctx.shadowOffsetX = mm(5); ctx.shadowOffsetY = mm(8);
+      traceAll(spokes); ctx.fillStyle = shade(base, -0.6); ctx.fill();
+      ctx.restore();
+    }
     spokes.forEach(p => drawSpokeBody(p, base, hl));
     if (carbon) fillClipped(() => traceAll(spokes), b => { ctx.fillStyle = carbonPattern(mm(5)); ctx.fillRect(-b, -b, b * 2, b * 2); }, rLipIn);
     if (brushed) {
@@ -1217,9 +1254,11 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
       ctx.restore();
     }
     // 輻條與唇邊交接處的陰影
-    const ao = ctx.createRadialGradient(0, 0, rEnd - mm(14), 0, 0, rLipIn);
-    ao.addColorStop(0, "rgba(0,0,0,0)"); ao.addColorStop(1, "rgba(0,0,0,0.45)");
-    ring(rEnd - mm(14), rLipIn); ctx.fillStyle = ao; ctx.fill();
+    if (!faceOnly) {
+      const ao = ctx.createRadialGradient(0, 0, rEnd - mm(14), 0, 0, rLipIn);
+      ao.addColorStop(0, "rgba(0,0,0,0)"); ao.addColorStop(1, "rgba(0,0,0,0.45)");
+      ring(rEnd - mm(14), rLipIn); ctx.fillStyle = ao; ctx.fill();
+    }
     ctx.restore();
 
     // 6. 雙片／三片：輪面外圈接合螺絲
