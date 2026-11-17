@@ -946,8 +946,8 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
   // ---------- 鍛造工法分解圖：斜 45° 視角，零件沿輪軸方向拉開 ----------
   // 輪桶剖面輪廓：[沿輪軸位置 0..1, 半徑比例]，前後凸緣、胎唇座、中間的落井
-  const BARREL_PROFILE = [[0, 1.07], [0.035, 1.07], [0.06, 1.0], [0.16, 1.0], [0.24, 0.9], [0.62, 0.9], [0.72, 1.0], [0.94, 1.0], [0.965, 1.07], [1, 1.07]];
-  const LIP_PROFILE = [[0, 1.07], [0.35, 1.07], [0.55, 1.0], [1, 0.98]];
+  const BARREL_PROFILE = [[0, 1.07], [0.03, 1.08], [0.07, 1.0], [0.15, 1.005], [0.18, 0.99], [0.27, 0.88], [0.6, 0.88], [0.7, 0.99], [0.82, 1.005], [0.93, 1.0], [0.97, 1.08], [1, 1.07]];
+  const LIP_PROFILE = [[0, 1.07], [0.25, 1.08], [0.5, 1.0], [0.8, 0.99], [1, 0.97]];
   function drawForgeDiagram(c, W, H, kind, faceImg) {
     const TH = 32 * Math.PI / 180;               // 輪軸方向
     const ux = Math.cos(TH), uy = Math.sin(TH);  // 沿輪軸
@@ -995,49 +995,131 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
       return g;
     }
 
-    // 依剖面輪廓畫筒狀零件（輪桶／外唇）：由後往前一段一段畫；前孔挖空才看得到後面的零件
+    // 依剖面輪廓畫筒狀零件（輪桶／外唇）
+    // 1. 輪廓用餘弦內插變平滑（凸緣是圓弧，不是折角）
+    // 2. 每一小段依斜面朝向調亮或調暗，再疊上拋光鋁常見的「棚燈」反光條
+    // 3. 前孔裡畫出內壁的落井段差與安裝凸緣，最後挖空看得穿的部分
+    function smooth(profile, n) {
+      const out = [];
+      for (let i = 0; i <= n; i++) {
+        const f = i / n;
+        let k = 1;
+        while (k < profile.length - 1 && profile[k][0] < f) k++;
+        const [fa, ra] = profile[k - 1], [fb, rb] = profile[k];
+        const u = fb === fa ? 0 : (f - fa) / (fb - fa);
+        out.push([f, ra + (rb - ra) * (1 - Math.cos(Math.PI * u)) / 2]);
+      }
+      return out;
+    }
     let layer = null;
-    function tube(t0, t1, body, profile, holeR, bolts) {
+    function tube(t0, t1, body, profile, holeR, opts = {}) {
       if (!layer || layer.width !== W || layer.height !== H) { layer = document.createElement("canvas"); layer.width = W; layer.height = H; }
       const L = layer.getContext("2d");
       L.setTransform(1, 0, 0, 1, 0, 0); L.clearRect(0, 0, W, H);
-      const pts = profile.map(([f, r]) => [t0 + (t1 - t0) * f, r]);
-      // 後緣
+      const len = t1 - t0;
+      const pts = smooth(profile, 40).map(([f, r]) => [t0 + len * f, r]);
+      const rMax = Math.max(...pts.map(p => p[1]));
+
+      // 棚燈反光：沿直徑方向的明暗條（上方受光、下方有地面反光）
+      function polish(t, rr, tint) {
+        const [x, y] = P(t);
+        const g = L.createLinearGradient(x - vx * R * rr, y - vy * R * rr, x + vx * R * rr, y + vy * R * rr);
+        [[0, 0.15], [0.05, 0.75], [0.1, 0.35], [0.2, 0.55], [0.26, 0.95], [0.3, 0.4], [0.42, 0.05],
+         [0.55, -0.3], [0.66, -0.12], [0.72, -0.45], [0.84, 0.05], [0.9, 0.35], [0.96, -0.2], [1, -0.55]]
+          .forEach(([o, a]) => g.addColorStop(o, shade(body, Math.max(-0.9, Math.min(0.95, a + tint)))));
+        return g;
+      }
+      // 後緣凸緣
       const [tb, rb] = pts[pts.length - 1];
-      ell(tb, rb, L); L.fillStyle = shade(body, -0.35); L.fill();
-      // 筒身：每一段是兩個橢圓之間的側面
+      ell(tb, rb, L); L.fillStyle = shade(body, -0.4); L.fill();
+      ell(tb, rb * 0.93, L); L.fillStyle = shade(body, -0.6); L.fill();
+      // 筒身（由後往前）
       for (let i = pts.length - 1; i > 0; i--) {
         const [ta, ra] = pts[i - 1], [tz, rz] = pts[i];
         const [xa, ya] = P(ta), [xz, yz] = P(tz);
+        const slope = (rz - ra) / ((tz - ta) || 1e-6) * 0.05; // >0：往後變大（面朝後，偏暗）
         L.beginPath();
         L.moveTo(xa + vx * R * ra, ya + vy * R * ra); L.lineTo(xz + vx * R * rz, yz + vy * R * rz);
         L.lineTo(xz - vx * R * rz, yz - vy * R * rz); L.lineTo(xa - vx * R * ra, ya - vy * R * ra); L.closePath();
-        L.fillStyle = metal(L, body, (ta + tz) / 2, Math.max(ra, rz), ra !== rz);
+        L.fillStyle = polish((ta + tz) / 2, Math.max(ra, rz), Math.max(-0.35, Math.min(0.3, -slope)));
         L.fill();
-        // 斜面（半徑變化處）加深或提亮，看得出凸緣與落井的立體感
-        if (ra !== rz) { L.fillStyle = ra > rz ? "rgba(0,0,0,0.18)" : "rgba(255,255,255,0.12)"; L.fill(); }
-        // 段落交界的細線
-        const [xs, ys] = P(ta);
-        L.beginPath(); L.ellipse(xs, ys, ra * K * R, ra * R, TH, -Math.PI / 2, Math.PI / 2, true);
-        L.strokeStyle = "rgba(255,255,255,0.28)"; L.lineWidth = lw * 0.8; L.stroke();
+        L.strokeStyle = L.fillStyle; L.lineWidth = 0.6; L.stroke(); // 蓋掉段與段之間的細縫
       }
-      // 前緣：拋光唇邊
+      // 輪廓線：上緣亮、下緣暗
+      L.lineWidth = lw;
+      [[-1, "rgba(255,255,255,0.7)"], [1, "rgba(0,0,0,0.45)"]].forEach(([side, col]) => {
+        L.beginPath();
+        pts.forEach(([t, r], i) => { const [x, y] = P(t); L[i ? "lineTo" : "moveTo"](x + side * vx * R * r, y + side * vy * R * r); });
+        L.strokeStyle = col; L.stroke();
+      });
+      // 氣嘴孔（落井上方）
+      if (opts.valve) {
+        const tv = t0 + len * 0.45, rv = Math.min(...pts.map(p => p[1]));
+        const [x, y] = P(tv), px = x - vx * R * rv * 0.86, py = y - vy * R * rv * 0.86;
+        L.beginPath(); L.ellipse(px, py, R * 0.035, R * 0.022, TH, 0, Math.PI * 2); L.fillStyle = "#e9ecef"; L.fill();
+        L.beginPath(); L.ellipse(px, py, R * 0.02, R * 0.012, TH, 0, Math.PI * 2); L.fillStyle = "#1b1d21"; L.fill();
+      }
+      // 前緣：圓弧唇邊，左上高光、右下陰影
       const [tf, rf] = pts[0];
-      ell(tf, rf, L);
       const [fx, fy] = P(tf);
-      const lipG = L.createLinearGradient(fx - vx * R, fy - vy * R, fx + vx * R, fy + vy * R);
-      lipG.addColorStop(0, "#ffffff"); lipG.addColorStop(0.3, "#dfe3e8"); lipG.addColorStop(0.55, "#9aa1aa");
-      lipG.addColorStop(0.8, "#e9ecef"); lipG.addColorStop(1, "#7d838c");
+      ell(tf, rf, L);
+      const lipG = L.createLinearGradient(fx - vx * R * rf, fy - vy * R * rf, fx + vx * R * rf, fy + vy * R * rf);
+      lipG.addColorStop(0, "#ffffff"); lipG.addColorStop(0.18, "#f2f4f6"); lipG.addColorStop(0.4, "#a9afb7");
+      lipG.addColorStop(0.62, "#d8dce1"); lipG.addColorStop(0.85, "#8a9099"); lipG.addColorStop(1, "#5f656e");
       L.fillStyle = lipG; L.fill();
-      L.strokeStyle = "rgba(0,0,0,0.3)"; L.lineWidth = lw; L.stroke();
-      if (bolts) boltRing(L, tf, (rf + holeR) / 2);
-      // 前孔：看得到的筒壁（上暗下亮），重疊部分挖空
-      const wall = L.createLinearGradient(fx - vx * R, fy - vy * R, fx + vx * R, fy + vy * R);
-      wall.addColorStop(0, shade(body, -0.6)); wall.addColorStop(0.6, shade(body, -0.15)); wall.addColorStop(1, shade(body, 0.2));
-      ell(tf, holeR, L); L.fillStyle = wall; L.fill();
+      L.save(); ell(tf, rf, L); L.clip();
+      L.beginPath(); L.ellipse(fx, fy, ((rf + holeR) / 2) * K * R, ((rf + holeR) / 2) * R, TH, Math.PI * 0.95, Math.PI * 1.55);
+      L.strokeStyle = "rgba(255,255,255,0.9)"; L.lineWidth = lw * 1.3; L.stroke();
+      L.restore();
+      L.strokeStyle = "rgba(0,0,0,0.3)"; L.lineWidth = lw * 0.8; ell(tf, rf, L); L.stroke();
+      if (opts.bolts) boltRing(L, tf, (rf + holeR) / 2);
+
+      // 前孔內部：內壁（上方背光較暗、下方受光較亮）＋落井段差
       L.save();
-      const minR = Math.min(...pts.map(p => p[1])) * holeR / rf;
-      ell(tb, minR, L); L.clip();
+      ell(tf, holeR, L); L.clip();
+      const wall = L.createLinearGradient(fx - vx * R, fy - vy * R, fx + vx * R, fy + vy * R);
+      [[0, -0.75], [0.25, -0.5], [0.45, -0.2], [0.56, 0.15], [0.62, 0.6], [0.67, 0.1], [0.78, 0.35], [0.88, -0.05], [1, -0.4]]
+        .forEach(([o, a]) => wall.addColorStop(o, shade(body, a)));
+      L.fillStyle = wall; L.fillRect(0, 0, W, H);
+      // 內壁上的段差線（內側輪廓 = 外側輪廓往內縮）
+      for (let i = 1; i < profile.length - 1; i++) {
+        const [f, r] = profile[i];
+        if (Math.abs(r - profile[i - 1][1]) < 0.02) continue;
+        const rr = r * holeR / rf;
+        ell(t0 + len * f, rr, L);
+        L.strokeStyle = r < profile[i - 1][1] ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.5)";
+        L.lineWidth = lw * 1.2; L.stroke();
+      }
+      // 安裝凸緣（雙片／三片的輪桶內側，輪面鎖在這圈上）
+      let openR = Math.min(...pts.map(p => p[1])) * holeR / rf;
+      let openT = tb;
+      if (opts.mount) {
+        const tm = t0 + len * 0.08;
+        // 只畫一圈環（偶奇填色），中間保留內壁的反光
+        const [cx0, cy0] = P(tm);
+        L.beginPath();
+        L.ellipse(cx0, cy0, holeR * 0.99 * K * R, holeR * 0.99 * R, TH, 0, Math.PI * 2);
+        L.ellipse(cx0, cy0, opts.mount * K * R, opts.mount * R, TH, 0, Math.PI * 2);
+        const mg = L.createLinearGradient(cx0 - vx * R, cy0 - vy * R, cx0 + vx * R, cy0 + vy * R);
+        mg.addColorStop(0, shade(body, -0.2)); mg.addColorStop(0.5, shade(body, 0.35)); mg.addColorStop(1, shade(body, -0.35));
+        L.fillStyle = mg; L.fill("evenodd");
+        L.strokeStyle = "rgba(0,0,0,0.4)"; L.lineWidth = lw * 0.8; L.stroke();
+        const n = 20, rr = (holeR * 0.99 + opts.mount) / 2;
+        const [mx, my] = P(tm);
+        for (let i = 0; i < n; i++) {
+          const phi = i * Math.PI * 2 / n;
+          L.beginPath();
+          L.arc(mx + ux * Math.cos(phi) * K * rr * R + vx * Math.sin(phi) * rr * R,
+                my + uy * Math.cos(phi) * K * rr * R + vy * Math.sin(phi) * rr * R, Math.max(0.7, R * 0.014), 0, Math.PI * 2);
+          L.fillStyle = "#24272c"; L.fill();
+        }
+        openR = Math.min(openR, opts.mount);
+      }
+      L.restore();
+      // 挖空：前孔、安裝凸緣內孔、後孔三者重疊的地方是空的
+      L.save();
+      ell(openT, openR, L); L.clip();
+      if (opts.mount) { ell(t0 + len * 0.08, opts.mount, L); L.clip(); }
       L.globalCompositeOperation = "destination-out";
       ell(tf, holeR, L); L.fill();
       L.restore();
@@ -1094,10 +1176,10 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     if (kind === "two") guides(0.05, 0.85);
     if (kind === "three") guides(0.05, 1.2);
     [...parts].reverse().forEach(p => {
-      if (p.type === "barrel") tube(p.t0, p.t1, BARREL, BARREL_PROFILE, 0.9, false);
-      else if (p.type === "lip") tube(p.t0, p.t1, SILVER, LIP_PROFILE, 0.86, true);
+      if (p.type === "barrel") tube(p.t0, p.t1, BARREL, BARREL_PROFILE, 0.92, { valve: true, mount: 0.8 });
+      else if (p.type === "lip") tube(p.t0, p.t1, SILVER, LIP_PROFILE, 0.86, { bolts: true });
       else if (p.type === "face") face(p.t0, 0.9);
-      else if (p.type === "wheel") { tube(p.t0, p.t1, base, BARREL_PROFILE, 0.9, false); face(p.t0 + 0.005, 1.07); }
+      else if (p.type === "wheel") { tube(p.t0, p.t1, base, BARREL_PROFILE, 0.92, { valve: true }); face(p.t0 + 0.005, 1.07); }
     });
   }
   function queueThumbs() {
