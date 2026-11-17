@@ -211,7 +211,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   <div class="layout">
     <section class="stage" aria-label="預覽">
       <div class="viewer">
-        <canvas id="wheel" width="600" height="600" role="img" tabindex="0" aria-label="鋁圈預覽圖（目前的款式與鍛造工法），可放大檢視"></canvas>
+        <canvas id="wheel" width="600" height="600" role="img" tabindex="0" aria-label="鋁圈預覽圖，可放大檢視"></canvas>
         <div class="zoom-bar" role="group" aria-label="放大檢視">
           <button id="zoom-out" type="button" class="icon-btn" aria-label="縮小">−</button>
           <span id="zoom-level" class="zoom-level">1×</span>
@@ -314,7 +314,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
         <p class="hint" id="finish-hint"></p>
       </fieldset>
 
-      <p class="note">預覽圖依所選的款式與鍛造工法顯示，為示意圖（銀色）；顏色、表面處理、尺寸、PCD、CB 等規格以規格碼為準。背距、前距以輪框總寬 = J 值 + 1 吋估算，實際以廠商圖面為準。</p>
+      <p class="note">預覽圖依所選的鍛造工法、款式、顏色與表面處理即時繪製；中盤的螺帽位置與中心孔依 PCD、CB 實際比例，圖的大小隨吋數變化。背距、前距以輪框總寬 = J 值 + 1 吋估算，實際以廠商圖面為準。</p>
     </form>
   </div>
 </div>
@@ -663,15 +663,50 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     return forge + "・" + style + "・" + color + "・" + finish;
   }
 
-  // ---------- 大預覽：顯示目前「工法 × 款式」的圖，可放大、拖曳 ----------
+  // ---------- 顏色工具 ----------
+  function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function toHex(r, g, b) {
+    return "#" + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("");
+  }
+  function mixHex(a, b, t) { // a→b，t 0..1
+    const A = hexToRgb(a), B = hexToRgb(b);
+    return toHex(A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t);
+  }
+  function vivid(hex) { // 陽極：提高飽和度並稍微提亮
+    const [r, g, b] = hexToRgb(hex);
+    const avg = (r + g + b) / 3;
+    return toHex(avg + (r - avg) * 1.45 + 12, avg + (g - avg) * 1.45 + 12, avg + (b - avg) * 1.45 + 12);
+  }
+  function shade(hex, amt) { // amt -1..1
+    const [r, g, b] = hexToRgb(hex);
+    const f = v => Math.round(amt < 0 ? v * (1 + amt) : v + (255 - v) * amt);
+    return "rgb(" + f(r) + "," + f(g) + "," + f(b) + ")";
+  }
+
+  // ---------- 大預覽：照片素材的後層／前層 ＋ 即時繪製的中盤 ----------
+  // 後層與前層來自鍛造工法的照片素材；中盤依款式、顏色、表面處理、尺寸、PCD、CB 即時繪製，再壓成同樣的透視角度
+  const LAYERS = {"mono":{"w":288,"h":293,"face":{"cx":113.575,"cy":120.681,"r1":117.136,"r2":67.131,"ang":-0.906},"axis":[0.76,0.6499],"tintBack":true},"two":{"w":354,"h":352,"face":{"cx":100.977,"cy":112.466,"r1":114.682,"r2":65.725,"ang":-0.906},"axis":[0.76,0.6499]},"three":{"w":401,"h":392,"face":{"cx":147.977,"cy":152.466,"r1":114.682,"r2":65.725,"ang":-0.906},"axis":[0.76,0.6499],"faceBolts":true}};
   const canvas = document.getElementById("wheel");
-  const ctx = canvas.getContext("2d");
+  const mainCtx = canvas.getContext("2d");
+  let ctx = mainCtx;                 // 繪製中盤時暫時換成中盤畫布
   const INCH = 25.4;
+  const LIGHT = [-0.55, -0.83];      // 光源方向：左上
   const view = { zoom: 1, panX: 0, panY: 0 }; // pan 以畫布寬度為單位
-  const preview = new Image();
-  preview.decoding = "async";
-  preview.addEventListener("load", () => draw());
-  let previewSrc = "";
+  const SIZE_SCALE = { 17: 0.86, 18: 0.9, 19: 0.95, 20: 1 }; // 吋數越大，圖越大
+
+  const layerImgs = {};
+  Object.keys(LAYERS).forEach(k => {
+    layerImgs[k] = { back: new Image(), front: new Image() };
+    ["back", "front"].forEach(part => {
+      const im = layerImgs[k][part];
+      im.decoding = "async";
+      im.addEventListener("load", () => draw());
+      im.src = "images/layers/" + k + "-" + part + ".png";
+    });
+  });
 
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -679,21 +714,376 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     if (canvas.width !== size) { canvas.width = size; canvas.height = size; }
   }
 
+  function ring(r0, r1) { // 圓環路徑（r0 內、r1 外）
+    ctx.beginPath();
+    ctx.arc(0, 0, r1, 0, Math.PI * 2);
+    ctx.arc(0, 0, r0, 0, Math.PI * 2, true);
+  }
+  function disc(r) { ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); }
+
+  // 金屬環的高光：可用時用錐形漸層，模擬車削金屬的反光
+  function metalSweep(base, strength) {
+    if (ctx.createConicGradient) {
+      const g = ctx.createConicGradient(-Math.PI / 2, 0, 0);
+      const hi = shade(base, strength), lo = shade(base, -strength * 0.9), mid = base;
+      [[0, mid], [0.08, hi], [0.17, mid], [0.32, lo], [0.5, mid], [0.6, shade(base, strength * 0.6)],
+       [0.7, mid], [0.82, lo], [0.9, hi], [1, mid]].forEach(([o, c]) => g.addColorStop(o, c));
+      return g;
+    }
+    const g = ctx.createLinearGradient(-300, -300, 300, 300);
+    g.addColorStop(0, shade(base, strength)); g.addColorStop(0.5, shade(base, -strength * 0.6)); g.addColorStop(1, shade(base, strength * 0.5));
+    return g;
+  }
+
+  // ----- 輻條幾何：每支輻條是一個多邊形，附帶垂直方向（用來做立體倒角光影） -----
+  function polyFromAxis(x0, y0, x1, y1, widths) {
+    // widths：沿軸線的 [位置比例, 寬度] 清單
+    const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len, px = -uy, py = ux;
+    const left = [], right = [];
+    let wMax = 0;
+    widths.forEach(([t, w]) => {
+      const cx = x0 + dx * t, cy = y0 + dy * t;
+      left.push([cx - px * w / 2, cy - py * w / 2]);
+      right.push([cx + px * w / 2, cy + py * w / 2]);
+      wMax = Math.max(wMax, w);
+    });
+    return { pts: left.concat(right.reverse()), p: [px, py], u: [ux, uy], a: [x0, y0], b: [x1, y1], wMax, widths };
+  }
+  function radialSpoke(ang, r0, r1, wIn, wMid, wOut) {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    return polyFromAxis(c * r0, s * r0, c * r1, s * r1, [[0, wIn], [0.55, wMid], [0.88, wMid * 1.02], [1, wOut]]);
+  }
+  function straightSpoke(x0, y0, x1, y1, w0, w1) {
+    return polyFromAxis(x0, y0, x1, y1, [[0, w0], [0.85, w1], [1, w1 * 1.35]]);
+  }
+
+  function buildSpokes(rHub, rEnd, unit) {
+    const list = [], s = state.style;
+    const claw = STYLES.find(x => x.id === s && x.spokes);
+    const top = -Math.PI / 2;
+    if (claw) {
+      const n = claw.spokes;
+      const w = rEnd * Math.min(0.34, 1.3 / n);
+      for (let i = 0; i < n; i++) list.push(radialSpoke(top + i * Math.PI * 2 / n, rHub * 0.7, rEnd, w * 1.15, w * 0.78, w * 1.05));
+    } else if (s === "double") {
+      for (let i = 0; i < 5; i++) {
+        const a = top + i * Math.PI * 2 / 5;
+        [-1, 1].forEach(k => {
+          const a1 = a + k * 0.13;
+          list.push(straightSpoke(Math.cos(a) * rHub * 0.7, Math.sin(a) * rHub * 0.7, Math.cos(a1) * rEnd, Math.sin(a1) * rEnd, rEnd * 0.13, rEnd * 0.085));
+        });
+      }
+    } else if (s === "y") {
+      for (let i = 0; i < 5; i++) {
+        const a = top + i * Math.PI * 2 / 5;
+        const rs = rHub + (rEnd - rHub) * 0.42;
+        list.push(radialSpoke(a, rHub * 0.7, rs + 6 * unit, rEnd * 0.2, rEnd * 0.15, rEnd * 0.16));
+        const sx = Math.cos(a) * rs, sy = Math.sin(a) * rs;
+        [-0.21, 0.21].forEach(d => {
+          list.push(straightSpoke(sx, sy, Math.cos(a + d) * rEnd, Math.sin(a + d) * rEnd, rEnd * 0.1, rEnd * 0.075));
+        });
+      }
+    } else if (s === "mesh") {
+      for (let i = 0; i < 10; i++) {
+        const a = i * Math.PI * 2 / 10;
+        [-0.52, 0.52].forEach(tw => {
+          list.push(straightSpoke(Math.cos(a) * rHub * 0.85, Math.sin(a) * rHub * 0.85,
+            Math.cos(a + tw) * rEnd, Math.sin(a + tw) * rEnd, rEnd * 0.06, rEnd * 0.05));
+        });
+      }
+    } else { // 多輻
+      for (let i = 0; i < 15; i++) list.push(radialSpoke(top + i * Math.PI * 2 / 15, rHub * 0.7, rEnd, rEnd * 0.1, rEnd * 0.06, rEnd * 0.075));
+    }
+    return list;
+  }
+  function tracePoly(poly) {
+    const p = poly.pts;
+    ctx.moveTo(p[0][0], p[0][1]);
+    for (let i = 1; i < p.length; i++) ctx.lineTo(p[i][0], p[i][1]);
+    ctx.closePath();
+  }
+  function traceAll(list) { ctx.beginPath(); list.forEach(tracePoly); }
+
+  function insetPoly(poly, k) { // 縮窄寬度，做車亮面的頂面
+    const [x0, y0] = poly.a, [x1, y1] = poly.b;
+    return polyFromAxis(x0, y0, x1, y1, poly.widths.map(([t, w]) => [t, w * k]));
+  }
+
+  // ----- 表面處理的紋理 -----
+  let carbonTile = null, carbonTileSize = 0;
+  function carbonPattern(cell) {
+    // 斜紋編織：每格一半橫紋、一半直紋，交錯排列
+    const size = Math.max(4, Math.round(cell));
+    if (!carbonTile || carbonTileSize !== size) {
+      carbonTile = document.createElement("canvas");
+      carbonTile.width = carbonTile.height = size * 2;
+      const t = carbonTile.getContext("2d");
+      for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
+        const x = i * size, y = j * size, horiz = (i + j) % 2 === 0;
+        const g = horiz ? t.createLinearGradient(x, y, x, y + size) : t.createLinearGradient(x, y, x + size, y);
+        g.addColorStop(0, "rgba(0,0,0,0.55)"); g.addColorStop(0.5, "rgba(255,255,255,0.16)"); g.addColorStop(1, "rgba(0,0,0,0.55)");
+        t.fillStyle = g; t.fillRect(x, y, size, size);
+        t.strokeStyle = "rgba(255,255,255,0.05)"; t.lineWidth = 1;
+        for (let k = 1; k < 4; k++) {
+          t.beginPath();
+          if (horiz) { t.moveTo(x, y + size * k / 4); t.lineTo(x + size, y + size * k / 4); }
+          else { t.moveTo(x + size * k / 4, y); t.lineTo(x + size * k / 4, y + size); }
+          t.stroke();
+        }
+      }
+      carbonTileSize = size;
+    }
+    const p = ctx.createPattern(carbonTile, "repeat");
+    if (p && p.setTransform && window.DOMMatrix) p.setTransform(new DOMMatrix().rotateSelf(45));
+    return p;
+  }
+  function fillClipped(traceFn, paint, bound) {
+    ctx.save(); traceFn(); ctx.clip();
+    paint(bound);
+    ctx.restore();
+  }
+  function brushAlong(poly, step) { // 髮絲紋：沿輻條方向的細線
+    const [ux, uy] = poly.u, [px, py] = poly.p;
+    const [ax, ay] = poly.a, [bx, by] = poly.b;
+    const half = poly.wMax / 2 + step;
+    let n = 0;
+    for (let o = -half; o <= half; o += step, n++) {
+      ctx.beginPath();
+      ctx.moveTo(ax + px * o - ux * step * 4, ay + py * o - uy * step * 4);
+      ctx.lineTo(bx + px * o + ux * step * 4, by + py * o + uy * step * 4);
+      ctx.strokeStyle = n % 3 === 0 ? "rgba(255,255,255,0.16)" : n % 3 === 1 ? "rgba(0,0,0,0.14)" : "rgba(255,255,255,0.06)";
+      ctx.stroke();
+    }
+  }
+  function concentricBrush(r0, r1, step) {
+    for (let r = r0, n = 0; r < r1; r += step, n++) {
+      disc(r);
+      ctx.strokeStyle = n % 3 === 0 ? "rgba(255,255,255,0.14)" : n % 3 === 1 ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.05)";
+      ctx.stroke();
+    }
+  }
+  function sparkle(bound, count, size) { // 陽極的細閃（固定亂數種子，畫面不會閃動）
+    let seed = 1234567;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    for (let i = 0; i < count; i++) {
+      const x = (rnd() * 2 - 1) * bound, y = (rnd() * 2 - 1) * bound;
+      ctx.fillStyle = "rgba(255,255,255," + (0.15 + rnd() * 0.35).toFixed(2) + ")";
+      ctx.fillRect(x, y, size, size);
+    }
+  }
+  function chromeBands(bound, strong) { // 電鍍：多道明暗反射帶
+    const g = ctx.createLinearGradient(-bound, -bound * 0.7, bound * 0.7, bound);
+    const a = strong ? 0.5 : 0.3;
+    [[0, "rgba(255,255,255,0)"], [0.18, "rgba(255,255,255," + a + ")"], [0.24, "rgba(0,0,0,0.35)"],
+     [0.42, "rgba(255,255,255,0)"], [0.55, "rgba(255,255,255," + (a * 0.8) + ")"], [0.6, "rgba(0,0,0,0.4)"],
+     [0.78, "rgba(255,255,255," + (a * 0.6) + ")"], [1, "rgba(0,0,0,0.2)"]].forEach(([o, c]) => g.addColorStop(o, c));
+    ctx.fillStyle = g; ctx.fillRect(-bound, -bound, bound * 2, bound * 2);
+  }
+
+  function drawSpokeBody(poly, base, hl) {
+    const [px, py] = poly.p;
+    const lit = px * LIGHT[0] + py * LIGHT[1]; // >0：+p 那一側朝光
+    const mx = (poly.a[0] + poly.b[0]) / 2, my = (poly.a[1] + poly.b[1]) / 2;
+    const h = poly.wMax / 2;
+    const g = ctx.createLinearGradient(mx - px * h, my - py * h, mx + px * h, my + py * h);
+    const bright = shade(base, hl + 0.12), dark = shade(base, -0.62);
+    const k = Math.min(1, Math.abs(lit) + 0.35);
+    const plus = lit > 0 ? bright : dark, minus = lit > 0 ? dark : bright;
+    g.addColorStop(0, minus);
+    g.addColorStop(0.16 * k, base);
+    g.addColorStop(0.5, shade(base, hl * 0.35));
+    g.addColorStop(1 - 0.16 * k, base);
+    g.addColorStop(1, plus);
+    ctx.beginPath(); tracePoly(poly); ctx.fillStyle = g; ctx.fill();
+  }
+
+  function drawLugNut(x, y, r, unit) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 4 * unit; ctx.shadowOffsetX = 1.5 * unit; ctx.shadowOffsetY = 2.5 * unit;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = Math.PI / 6 + i * Math.PI / 3;
+      ctx[i ? "lineTo" : "moveTo"](Math.cos(a) * r, Math.sin(a) * r);
+    }
+    ctx.closePath();
+    const g = ctx.createLinearGradient(-r, -r, r, r);
+    g.addColorStop(0, "#f1f3f6"); g.addColorStop(0.45, "#9aa1ab"); g.addColorStop(1, "#4b5059");
+    ctx.fillStyle = g; ctx.fill();
+    ctx.shadowColor = "transparent";
+    const g2 = ctx.createRadialGradient(-r * 0.2, -r * 0.2, 0, 0, 0, r * 0.62);
+    g2.addColorStop(0, "#c6cbd2"); g2.addColorStop(1, "#5e646d");
+    ctx.beginPath(); ctx.arc(0, 0, r * 0.62, 0, Math.PI * 2); ctx.fillStyle = g2; ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, r * 0.32, 0, Math.PI * 2); ctx.fillStyle = "#2a2d32"; ctx.fill();
+    ctx.restore();
+  }
+
+
+  // ---------- 正面中盤（之後壓成透視） ----------
+  const faceCanvas = document.createElement("canvas");
+  const darkFace = document.createElement("canvas");
+  let faceKey = "";
+  function renderFace(S, forge) {
+    const key = [S, forge, state.style, state.color, state.custom, state.finish, state.size, state.pcd, state.cb].join("|");
+    if (key === faceKey) return;
+    faceKey = key;
+    if (faceCanvas.width !== S) { faceCanvas.width = faceCanvas.height = S; darkFace.width = darkFace.height = S; }
+    const prev = ctx;
+    ctx = faceCanvas.getContext("2d");
+    try {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, S, S);
+      ctx.translate(S / 2, S / 2);
+      const R = S / 2 * 0.98;                                // 中盤外緣
+      const unit = R / (state.size * INCH / 2 * 0.86);       // 每 mm 的像素：中盤外緣約為輪框直徑的 86%
+      const mm = v => v * unit;
+      const rIn = R * 0.86, rEnd = R * 0.88;
+      const pcdMm = parseFloat(state.pcd.slice(2));
+      const rBolt = mm(pcdMm / 2);
+      const rHub = Math.min(mm(pcdMm / 2 + 26), R * 0.5);
+      const fin = state.finish;
+      const picked = currentColor();
+      const matte = fin === "matte", machined = fin === "machined", carbon = fin === "carbon";
+      const chrome = fin === "chrome", brushed = fin === "brushed", anodized = fin === "anodized";
+      const base = carbon ? mixHex(picked, "#111214", 0.72) : anodized ? vivid(picked) : chrome ? mixHex(picked, "#ffffff", 0.18) : picked;
+      const hl = { matte: 0.1, brushed: 0.22, carbon: 0.2, chrome: 0.62, anodized: 0.3 }[fin] ?? 0.34;
+
+      // 中盤外圈（雙片／三片鎖在輪桶上的那圈）
+      ring(rIn, R); ctx.fillStyle = metalSweep(machined ? "#c3c8cf" : base, matte ? 0.12 : chrome ? 0.7 : 0.42); ctx.fill();
+      if (carbon) fillClipped(() => ring(rIn, R), b => { ctx.fillStyle = carbonPattern(mm(5)); ctx.fillRect(-b, -b, b * 2, b * 2); }, R);
+      if (brushed) fillClipped(() => ring(rIn, R), () => { ctx.lineWidth = Math.max(0.5, mm(0.3)); concentricBrush(rIn, R, mm(0.9)); }, R);
+      if (chrome) fillClipped(() => ring(rIn, R), b => chromeBands(b, true), R);
+      ring(R - Math.max(1, R * 0.012), R); ctx.fillStyle = "rgba(255,255,255,0.35)"; ctx.fill();
+      ring(rIn, rIn + Math.max(1, R * 0.01)); ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.fill();
+      if (LAYERS[forge].faceBolts) {
+        for (let i = 0; i < 30; i++) {
+          const a = i * Math.PI * 2 / 30, rr = (rIn + R) / 2;
+          ctx.beginPath(); ctx.arc(Math.cos(a) * rr, Math.sin(a) * rr, R * 0.018, 0, Math.PI * 2); ctx.fillStyle = "#26282d"; ctx.fill();
+        }
+      }
+
+      // 輻條
+      const spokes = buildSpokes(rHub, rEnd, unit);
+      spokes.forEach(p => drawSpokeBody(p, base, hl));
+      if (carbon) fillClipped(() => traceAll(spokes), b => { ctx.fillStyle = carbonPattern(mm(5)); ctx.fillRect(-b, -b, b * 2, b * 2); }, R);
+      if (brushed) {
+        ctx.lineWidth = Math.max(0.5, mm(0.3));
+        spokes.forEach(p => fillClipped(() => { ctx.beginPath(); tracePoly(p); }, () => brushAlong(p, mm(0.9)), R));
+      }
+      if (anodized) fillClipped(() => traceAll(spokes), b => sparkle(b, Math.round(b * b / mm(5) / mm(5)), Math.max(1, mm(0.7))), R);
+      if (chrome) fillClipped(() => traceAll(spokes), b => chromeBands(b, false), R);
+      if (machined) {
+        const faces = spokes.map(p => insetPoly(p, 0.62));
+        ctx.save(); traceAll(faces); ctx.clip();
+        ctx.fillStyle = metalSweep("#c9ced6", 0.35); ctx.fillRect(-R, -R, R * 2, R * 2);
+        ctx.strokeStyle = "rgba(255,255,255,0.12)"; ctx.lineWidth = Math.max(0.5, mm(0.35));
+        for (let r = rHub * 0.6; r < R; r += mm(1.6)) { disc(r); ctx.stroke(); }
+        ctx.restore();
+      }
+      if (!matte && !brushed) {
+        ctx.save(); traceAll(spokes); ctx.clip();
+        const streak = ctx.createLinearGradient(-R, -R * 0.6, R * 0.6, R);
+        const sa = chrome ? 0.45 : carbon ? 0.3 : anodized ? 0.16 : 0.22;
+        streak.addColorStop(0.28, "rgba(255,255,255,0)"); streak.addColorStop(0.36, "rgba(255,255,255," + sa + ")");
+        streak.addColorStop(0.42, "rgba(255,255,255,0)");
+        ctx.fillStyle = streak; ctx.fillRect(-R, -R, R * 2, R * 2);
+        ctx.restore();
+      }
+
+      // 中心盤
+      const hub = ctx.createRadialGradient(-rHub * 0.35, -rHub * 0.45, rHub * 0.05, 0, 0, rHub);
+      hub.addColorStop(0, shade(base, hl + 0.05)); hub.addColorStop(0.7, base); hub.addColorStop(1, shade(base, -0.35));
+      disc(rHub); ctx.fillStyle = hub; ctx.fill();
+      const bevel = ctx.createLinearGradient(-rHub, -rHub, rHub, rHub);
+      bevel.addColorStop(0, "rgba(255,255,255,0.45)"); bevel.addColorStop(0.5, "rgba(255,255,255,0)"); bevel.addColorStop(1, "rgba(0,0,0,0.45)");
+      ring(rHub - mm(3), rHub); ctx.fillStyle = bevel; ctx.fill();
+      if (carbon) fillClipped(() => disc(rHub - mm(3)), b => { ctx.fillStyle = carbonPattern(mm(5)); ctx.fillRect(-b, -b, b * 2, b * 2); }, rHub);
+      if (brushed) fillClipped(() => disc(rHub - mm(3)), () => { ctx.lineWidth = Math.max(0.5, mm(0.3)); concentricBrush(mm(2), rHub, mm(0.9)); }, rHub);
+      if (anodized) fillClipped(() => disc(rHub), b => sparkle(b, Math.round(b * b / mm(5) / mm(5)), Math.max(1, mm(0.7))), rHub);
+      if (chrome) fillClipped(() => disc(rHub), b => chromeBands(b, true), rHub);
+
+      // 螺帽：依 PCD 的孔數與孔距
+      const holes = parseInt(state.pcd, 10);
+      for (let i = 0; i < holes; i++) {
+        const a = -Math.PI / 2 + i * Math.PI * 2 / holes;
+        const x = Math.cos(a) * rBolt, y = Math.sin(a) * rBolt;
+        ctx.beginPath(); ctx.arc(x, y, mm(12.5), 0, Math.PI * 2); ctx.fillStyle = "rgba(0,0,0,0.75)"; ctx.fill();
+        drawLugNut(x, y, mm(10.5), unit);
+      }
+      // 中心孔：依 CB 實際大小
+      const rCb = mm(state.cb / 2);
+      disc(rCb); ctx.fillStyle = "#08090a"; ctx.fill();
+      const rCap = rCb - mm(4);
+      const cap = ctx.createRadialGradient(-rCap * 0.35, -rCap * 0.4, rCap * 0.05, 0, 0, rCap);
+      cap.addColorStop(0, shade(base, hl + 0.2)); cap.addColorStop(0.6, shade(base, -0.1)); cap.addColorStop(1, shade(base, -0.55));
+      disc(rCap); ctx.fillStyle = cap; ctx.fill();
+    } finally {
+      ctx = prev;
+    }
+    // 厚度用的暗色版本
+    const d = darkFace.getContext("2d");
+    d.globalCompositeOperation = "source-over";
+    d.clearRect(0, 0, S, S); d.drawImage(faceCanvas, 0, 0);
+    d.globalCompositeOperation = "source-atop";
+    d.fillStyle = "rgba(8,9,11,0.6)"; d.fillRect(0, 0, S, S);
+  }
+
+  // 單片的輪桶與中盤同色：把照片輪桶染成所選顏色（電鍍、車亮面維持金屬色）
+  const tintCanvas = document.createElement("canvas");
+  let tintKey = "";
+  function tintedBack(img) {
+    const key = [img.src, state.color, state.custom, state.finish].join("|");
+    if (key === tintKey) return tintCanvas;
+    tintKey = key;
+    tintCanvas.width = img.naturalWidth; tintCanvas.height = img.naturalHeight;
+    const t = tintCanvas.getContext("2d");
+    t.globalCompositeOperation = "source-over";
+    t.drawImage(img, 0, 0);
+    t.globalCompositeOperation = "multiply";
+    t.fillStyle = mixHex(currentColor(), "#ffffff", 0.12);
+    t.fillRect(0, 0, tintCanvas.width, tintCanvas.height);
+    t.globalCompositeOperation = "destination-in";
+    t.drawImage(img, 0, 0);
+    return tintCanvas;
+  }
+
   function draw() {
     resize();
-    const src = "images/preview/" + state.forge + "-" + state.style + ".webp";
-    if (src !== previewSrc) { previewSrc = src; preview.src = src; }
     const W = canvas.width;
+    ctx = mainCtx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, W);
-    if (!preview.complete || !preview.naturalWidth) return; // 圖片載入後會再畫一次
+    const L = LAYERS[state.forge], imgs = layerImgs[state.forge];
+    if (!imgs.back.complete || !imgs.back.naturalWidth || !imgs.front.complete) return; // 圖片載入後會再畫一次
+    const fit = Math.min(W / L.w, W / L.h) * 0.94 * (SIZE_SCALE[state.size] || 1);
     ctx.translate(W / 2 + view.panX * W, W / 2 + view.panY * W);
-    ctx.scale(view.zoom, view.zoom);
-    const s = Math.min(W / preview.naturalWidth, W / preview.naturalHeight) * 0.96;
-    const w = preview.naturalWidth * s, h = preview.naturalHeight * s;
+    ctx.scale(view.zoom * fit, view.zoom * fit);
+    ctx.translate(-L.w / 2, -L.h / 2);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(preview, -w / 2, -h / 2, w, h);
+
+    // 後層
+    const keepMetal = state.finish === "chrome" || state.finish === "machined";
+    ctx.drawImage(L.tintBack && !keepMetal ? tintedBack(imgs.back) : imgs.back, 0, 0);
+
+    // 中盤：正面畫好後壓成透視橢圓，往輪軸方向疊幾層暗色當厚度
+    const f = L.face;
+    const S = Math.max(160, Math.min(1600, Math.round(f.r1 * 2 * fit * view.zoom / 0.98)));
+    renderFace(S, state.forge);
+    const R = S / 2 * 0.98, ca = Math.cos(f.ang), sa = Math.sin(f.ang);
+    const put = (img, k) => {
+      ctx.save();
+      ctx.translate(f.cx + L.axis[0] * k, f.cy + L.axis[1] * k);
+      ctx.transform(f.r1 / R * ca, f.r1 / R * sa, -f.r2 / R * sa, f.r2 / R * ca, 0, 0);
+      ctx.drawImage(img, -S / 2, -S / 2);
+      ctx.restore();
+    };
+    for (let k = 4; k >= 1; k--) put(darkFace, k);
+    put(faceCanvas, 0);
+
+    // 前層
+    ctx.drawImage(imgs.front, 0, 0);
   }
 
   // ---------- 放大檢視：按鈕、拖曳、雙擊 ----------
