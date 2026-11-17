@@ -330,7 +330,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   const FORGES = [
     { id: "mono", name: "單片鍛造", hint: "整顆由一塊鋁錠鍛造，最輕、剛性最好，尺寸規格在鍛造後即固定。" },
     { id: "two", name: "雙片鍛造", hint: "輪面與輪桶分開製作再接合，J 值與 ET 可彈性搭配，輪面外圈可見一圈接合螺絲。" },
-    { id: "three", name: "三片鍛造", hint: "輪面、外唇、內桶三件組合，J 值與 ET 調整最自由，維修可單換外唇；重量與價格較高。" },
+    { id: "three", name: "三片鍛造", hint: "外唇、中盤、後桶三件組合，J 值與 ET 調整最自由，維修可單換外唇；重量與價格較高。" },
   ];
   const STYLES = [
     { id: "claw3", name: "三爪", spokes: 3 },
@@ -473,14 +473,14 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   const cbChips = document.getElementById("cb-chips");
   CB_PRESETS.forEach(v => cbChips.append(chip("cb-preset", v, v.toFixed(1), v === state.cb)));
   const forgeChips = document.getElementById("forge-chips");
-  const FORGE_IMAGES = { mono: "單片鍛造：一體成形的鋁圈，接近正面的視角", two: "雙片鍛造分解圖：輪面與輪桶", three: "三片鍛造分解圖：外唇、輪面與內桶" };
+  const FORGE_IMAGES = { mono: "單片鍛造分解圖：一體成形的鋁圈", two: "雙片鍛造分解圖：輪面與輪桶", three: "三片鍛造分解圖：前方外唇、中盤、後桶" };
   FORGES.forEach(f => {
     const c = chip("forge", f.id, f.name, f.id === state.forge);
     c.classList.add("forge-chip");
     const parts = document.createElement("small");
     parts.className = "forge-parts";
     // 每個零件名稱不拆開，只在「＋」前換行
-    ({ mono: ["一體成形"], two: ["輪面", "輪桶"], three: ["外唇", "輪面", "內桶"] })[f.id].forEach((name, i) => {
+    ({ mono: ["一體成形"], two: ["輪面", "輪桶"], three: ["外唇", "中盤", "後桶"] })[f.id].forEach((name, i) => {
       const seg = document.createElement("span");
       seg.className = "nowrap";
       seg.textContent = (i ? "＋" : "") + name;
@@ -490,7 +490,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     const img = document.createElement("img");
     img.className = "diagram"; img.src = "images/forge-" + f.id + ".png";
     img.alt = FORGE_IMAGES[f.id];
-    [img.width, img.height] = { mono: [298, 269], two: [346, 337], three: [346, 337] }[f.id];
+    [img.width, img.height] = { mono: [288, 294], two: [346, 337], three: [401, 393] }[f.id];
     img.decoding = "async"; img.draggable = false;
     c.querySelector("span").prepend(img);
     forgeChips.append(c);
