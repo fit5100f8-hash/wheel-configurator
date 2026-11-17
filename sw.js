@@ -14,6 +14,9 @@ const APP_SHELL = [
   "./icons/icon-maskable-512.png",
   "./icons/apple-touch-icon.png",
   "./icons/favicon-32.png",
+  "./images/forge-mono.png",
+  "./images/forge-two.png",
+  "./images/forge-three.png",
 ];
 
 self.addEventListener("install", event => {
