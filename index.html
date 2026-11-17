@@ -314,7 +314,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
         <p class="hint" id="finish-hint"></p>
       </fieldset>
 
-      <p class="note">預覽圖依所選的鍛造工法、款式、顏色與表面處理即時繪製；中盤的螺帽位置與中心孔依 PCD、CB 實際比例，圖的大小隨吋數變化。背距、前距以輪框總寬 = J 值 + 1 吋估算，實際以廠商圖面為準。</p>
+      <p class="note">預覽圖依所選的鍛造工法、款式、顏色與表面處理即時繪製（顏色與表面處理只套用在中盤，外唇與後桶維持金屬原色）；中盤的螺帽位置與中心孔依 PCD、CB 實際比例，圖的大小隨吋數變化。背距、前距以輪框總寬 = J 值 + 1 吋估算，實際以廠商圖面為準。</p>
     </form>
   </div>
 </div>
@@ -688,7 +688,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
   // ---------- 大預覽：照片素材的後層／前層 ＋ 即時繪製的中盤 ----------
   // 後層與前層來自鍛造工法的照片素材；中盤依款式、顏色、表面處理、尺寸、PCD、CB 即時繪製，再壓成同樣的透視角度
-  const LAYERS = {"mono":{"w":288,"h":293,"face":{"cx":113.575,"cy":120.681,"r1":117.136,"r2":67.131,"ang":-0.906},"axis":[0.76,0.6499],"tintBack":true},"two":{"w":354,"h":352,"face":{"cx":100.977,"cy":112.466,"r1":114.682,"r2":65.725,"ang":-0.906},"axis":[0.76,0.6499]},"three":{"w":401,"h":392,"face":{"cx":147.977,"cy":152.466,"r1":114.682,"r2":65.725,"ang":-0.906},"axis":[0.76,0.6499],"faceBolts":true}};
+  const LAYERS = {"mono":{"w":288,"h":293,"face":{"cx":113.575,"cy":120.681,"r1":117.136,"r2":67.131,"ang":-0.906},"axis":[0.76,0.6499]},"two":{"w":354,"h":352,"face":{"cx":100.977,"cy":112.466,"r1":114.682,"r2":65.725,"ang":-0.906},"axis":[0.76,0.6499]},"three":{"w":401,"h":392,"face":{"cx":147.977,"cy":152.466,"r1":114.682,"r2":65.725,"ang":-0.906},"axis":[0.76,0.6499],"faceBolts":true}};
   const canvas = document.getElementById("wheel");
   const mainCtx = canvas.getContext("2d");
   let ctx = mainCtx;                 // 繪製中盤時暫時換成中盤畫布
@@ -1029,25 +1029,6 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     d.fillStyle = "rgba(8,9,11,0.6)"; d.fillRect(0, 0, S, S);
   }
 
-  // 單片的輪桶與中盤同色：把照片輪桶染成所選顏色（電鍍、車亮面維持金屬色）
-  const tintCanvas = document.createElement("canvas");
-  let tintKey = "";
-  function tintedBack(img) {
-    const key = [img.src, state.color, state.custom, state.finish].join("|");
-    if (key === tintKey) return tintCanvas;
-    tintKey = key;
-    tintCanvas.width = img.naturalWidth; tintCanvas.height = img.naturalHeight;
-    const t = tintCanvas.getContext("2d");
-    t.globalCompositeOperation = "source-over";
-    t.drawImage(img, 0, 0);
-    t.globalCompositeOperation = "multiply";
-    t.fillStyle = mixHex(currentColor(), "#ffffff", 0.12);
-    t.fillRect(0, 0, tintCanvas.width, tintCanvas.height);
-    t.globalCompositeOperation = "destination-in";
-    t.drawImage(img, 0, 0);
-    return tintCanvas;
-  }
-
   function draw() {
     resize();
     const W = canvas.width;
@@ -1063,9 +1044,8 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
 
-    // 後層
-    const keepMetal = state.finish === "chrome" || state.finish === "machined";
-    ctx.drawImage(L.tintBack && !keepMetal ? tintedBack(imgs.back) : imgs.back, 0, 0);
+    // 後層（輪桶維持照片原色，顏色只套用在中盤）
+    ctx.drawImage(imgs.back, 0, 0);
 
     // 中盤：正面畫好後壓成透視橢圓，往輪軸方向疊幾層暗色當厚度
     const f = L.face;
