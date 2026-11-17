@@ -129,6 +129,9 @@ canvas:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
 .chip input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 2px; }
 .swatch { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line); flex: none; }
 
+.forge-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.forge-chip span { flex-direction: column; justify-content: center; gap: 4px; padding: 8px 6px; height: 100%; text-align: center; }
+.forge-chip canvas.diagram { width: 100%; max-width: 140px; aspect-ratio: 2 / 1; height: auto; cursor: pointer; touch-action: auto; display: block; }
 .style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
 .style-chip span { flex-direction: column; justify-content: center; gap: 4px; padding: 8px 6px; height: 100%; text-align: center; }
 .style-chip canvas.thumb { border-radius: 50%; width: 64px; height: 64px; max-width: 100%; aspect-ratio: 1 / 1; cursor: pointer; touch-action: auto; display: block; }
@@ -275,7 +278,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
       <fieldset class="group">
         <legend>鍛造工法</legend>
-        <div class="chips" id="forge-chips"></div>
+        <div class="forge-grid" id="forge-chips"></div>
         <p class="hint" id="forge-hint"></p>
       </fieldset>
 
@@ -468,7 +471,17 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   const cbChips = document.getElementById("cb-chips");
   CB_PRESETS.forEach(v => cbChips.append(chip("cb-preset", v, v.toFixed(1), v === state.cb)));
   const forgeChips = document.getElementById("forge-chips");
-  FORGES.forEach(f => forgeChips.append(chip("forge", f.id, f.name, f.id === state.forge)));
+  const forgeDiagrams = []; // 鍛造工法的分解圖畫布
+  FORGES.forEach(f => {
+    const c = chip("forge", f.id, f.name, f.id === state.forge);
+    c.classList.add("forge-chip");
+    const cv = document.createElement("canvas");
+    cv.className = "diagram"; cv.width = 280; cv.height = 140;
+    cv.setAttribute("aria-hidden", "true");
+    c.querySelector("span").prepend(cv);
+    forgeDiagrams.push({ id: f.id, cv });
+    forgeChips.append(c);
+  });
   const styleChips = document.getElementById("style-chips");
   const thumbs = []; // 款式縮圖的畫布
   STYLES.forEach(s => {
@@ -897,6 +910,77 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     } finally {
       ctx = mainCtx;
       state.style = styleNow;
+    }
+    forgeDiagrams.forEach(({ id, cv }) => {
+      const w = Math.round((cv.clientWidth || 132) * dpr), h = Math.round(w / 2);
+      if (cv.width !== w) { cv.width = w; cv.height = h; }
+      drawForgeDiagram(cv.getContext("2d"), w, h, id);
+    });
+  }
+
+  // ---------- 鍛造工法分解圖：側面透視，零件沿輪軸方向拉開 ----------
+  function drawForgeDiagram(c, W, H, kind) {
+    const base = currentColor();
+    const silver = "#c9ced6", dark = "#15171b";
+    const cy = H / 2, r = H * 0.4, k = 0.34; // k：橢圓寬度比例（透視角度）
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.clearRect(0, 0, W, H);
+    const ell = (x, rr) => { c.beginPath(); c.ellipse(x, cy, rr * k, rr, 0, 0, Math.PI * 2); };
+    const lw = Math.max(1, W / 220);
+
+    // 圓筒：xf 為前緣，d 為深度；hole 為前緣的內孔比例
+    function cylinder(xf, d, rr, body, hole) {
+      ell(xf + d, rr); c.fillStyle = shade(body, -0.45); c.fill();
+      const g = c.createLinearGradient(0, cy - rr, 0, cy + rr);
+      g.addColorStop(0, shade(body, 0.35)); g.addColorStop(0.35, body); g.addColorStop(1, shade(body, -0.5));
+      c.fillStyle = g; c.fillRect(xf, cy - rr, d, rr * 2);
+      ell(xf, rr); c.fillStyle = shade(body, 0.15); c.fill();
+      c.strokeStyle = "rgba(0,0,0,0.35)"; c.lineWidth = lw; c.stroke();
+      if (hole) { ell(xf, rr * hole); c.fillStyle = dark; c.fill(); }
+    }
+    // 輪面：前視的五爪，壓成透視橢圓
+    function face(x, rr) {
+      ell(x, rr); c.fillStyle = dark; c.fill();
+      c.save(); c.translate(x, cy); c.scale(k, 1);
+      c.fillStyle = base;
+      for (let i = 0; i < 5; i++) {
+        const a = -Math.PI / 2 + i * Math.PI * 2 / 5, px = -Math.sin(a), py = Math.cos(a);
+        const w0 = rr * 0.26, w1 = rr * 0.16, r0 = rr * 0.2, r1 = rr * 0.98;
+        c.beginPath();
+        c.moveTo(Math.cos(a) * r0 + px * w0 / 2, Math.sin(a) * r0 + py * w0 / 2);
+        c.lineTo(Math.cos(a) * r1 + px * w1 / 2, Math.sin(a) * r1 + py * w1 / 2);
+        c.lineTo(Math.cos(a) * r1 - px * w1 / 2, Math.sin(a) * r1 - py * w1 / 2);
+        c.lineTo(Math.cos(a) * r0 - px * w0 / 2, Math.sin(a) * r0 - py * w0 / 2);
+        c.closePath(); c.fill();
+      }
+      c.beginPath(); c.arc(0, 0, rr * 0.3, 0, Math.PI * 2); c.fillStyle = shade(base, 0.15); c.fill();
+      c.beginPath(); c.arc(0, 0, rr * 0.1, 0, Math.PI * 2); c.fillStyle = dark; c.fill();
+      c.restore();
+      ell(x, rr); c.strokeStyle = shade(base, -0.4); c.lineWidth = lw * 1.5; c.stroke();
+    }
+    // 組裝虛線（輪軸）
+    function axis(x0, x1) {
+      c.save(); c.setLineDash([W / 60, W / 80]);
+      c.strokeStyle = "rgba(127,127,127,0.7)"; c.lineWidth = lw;
+      [-0.7, 0, 0.7].forEach(t => { c.beginPath(); c.moveTo(x0, cy + r * t); c.lineTo(x1, cy + r * t); c.stroke(); });
+      c.restore();
+    }
+
+    if (kind === "mono") {
+      // 一整顆：輪桶與輪面為同一件
+      cylinder(W * 0.36, W * 0.34, r, shade(base, -0.15), 0);
+      face(W * 0.36, r * 0.96);
+    } else if (kind === "two") {
+      // 兩片：輪面｜輪桶（含外唇）
+      axis(W * 0.16, W * 0.5);
+      cylinder(W * 0.5, W * 0.34, r, "#8d939c", 0.86);
+      face(W * 0.18, r * 0.86);
+    } else {
+      // 三片：外唇｜輪面｜內桶
+      axis(W * 0.12, W * 0.64);
+      cylinder(W * 0.64, W * 0.26, r, "#8d939c", 0.86);
+      face(W * 0.42, r * 0.86);
+      cylinder(W * 0.12, W * 0.07, r, silver, 0.86);
     }
   }
   function queueThumbs() {
