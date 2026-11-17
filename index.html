@@ -473,7 +473,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   const cbChips = document.getElementById("cb-chips");
   CB_PRESETS.forEach(v => cbChips.append(chip("cb-preset", v, v.toFixed(1), v === state.cb)));
   const forgeChips = document.getElementById("forge-chips");
-  const FORGE_IMAGES = { mono: "單片鍛造分解圖：一體成形的鋁圈", two: "雙片鍛造分解圖：輪面與輪桶", three: "三片鍛造分解圖：外唇、輪面與內桶" };
+  const FORGE_IMAGES = { mono: "單片鍛造：一體成形的鋁圈，接近正面的視角", two: "雙片鍛造分解圖：輪面與輪桶", three: "三片鍛造分解圖：外唇、輪面與內桶" };
   FORGES.forEach(f => {
     const c = chip("forge", f.id, f.name, f.id === state.forge);
     c.classList.add("forge-chip");
@@ -490,7 +490,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     const img = document.createElement("img");
     img.className = "diagram"; img.src = "images/forge-" + f.id + ".png";
     img.alt = FORGE_IMAGES[f.id];
-    [img.width, img.height] = { mono: [288, 294], two: [346, 337], three: [346, 337] }[f.id];
+    [img.width, img.height] = { mono: [298, 269], two: [346, 337], three: [346, 337] }[f.id];
     img.decoding = "async"; img.draggable = false;
     c.querySelector("span").prepend(img);
     forgeChips.append(c);
