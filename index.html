@@ -139,8 +139,35 @@ canvas:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
 .cb-row input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .cb-row input[aria-invalid="true"] { border-color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
 .cb-unit { color: var(--muted); }
-.custom-color { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 0.9rem; }
-.custom-color input[type="color"] { width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 10px; padding: 2px; background: var(--bg); }
+/* 調色盤：依色系分組的色塊 */
+.color-current { display: flex; align-items: center; gap: 10px; font-weight: 700; }
+.color-current code { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.swatch.big { width: 28px; height: 28px; }
+.palette { display: grid; gap: 14px; }
+.palette-group { display: grid; gap: 8px; min-width: 0; }
+.palette-name { margin: 0; font-size: 0.8rem; color: var(--muted); }
+.swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+.sw { position: relative; width: 44px; height: 44px; flex: none; }
+.sw input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.sw .dot, .recent-btn {
+  display: block; width: 100%; height: 100%; border-radius: 50%;
+  border: 1px solid var(--line); box-shadow: inset 0 -6px 10px rgba(0,0,0,0.25), inset 0 4px 8px rgba(255,255,255,0.25);
+}
+.sw input:checked + .dot { outline: 3px solid var(--accent); outline-offset: 3px; }
+.sw input:focus-visible + .dot { outline: 3px dashed var(--accent); outline-offset: 3px; }
+.recent-btn { width: 44px; height: 44px; padding: 0; cursor: pointer; min-height: 0; }
+.recent-btn:focus-visible { outline: 3px dashed var(--accent); outline-offset: 3px; }
+.custom-color { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.custom-color input[type="color"] { width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 10px; padding: 2px; background: var(--bg); cursor: pointer; }
+.custom-color input[type="text"] {
+  width: 7.5rem; min-height: 44px; padding: 8px 12px; font: inherit; text-transform: uppercase;
+  font-variant-numeric: tabular-nums; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 10px;
+}
+.custom-color input[type="text"][aria-invalid="true"] { border-color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
+.custom-color input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+button.secondary { background: transparent; color: var(--accent); min-height: 44px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
 .scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
@@ -251,11 +278,26 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
       <fieldset class="group">
         <legend>顏色</legend>
-        <div class="chips" id="color-chips"></div>
-        <label class="custom-color" for="custom-color">
-          <input id="custom-color" type="color" value="#3a6ea5">
-          自訂顏色（點選後套用）
-        </label>
+        <div class="color-current" aria-live="polite">
+          <i class="swatch big" id="color-current-swatch"></i>
+          <span id="color-current-name">鈦灰</span>
+          <code id="color-current-hex">#4A4F57</code>
+        </div>
+        <div class="palette" id="palette"></div>
+        <div class="palette-group">
+          <p class="palette-name">自訂調色</p>
+          <div class="custom-color">
+            <input id="custom-color" type="color" value="#3a6ea5" aria-label="開啟調色盤自選顏色">
+            <label class="visually-hidden" for="custom-hex">色碼</label>
+            <input id="custom-hex" type="text" inputmode="text" maxlength="7" spellcheck="false" autocomplete="off" value="#3A6EA5" aria-describedby="custom-hint">
+            <button id="custom-apply" type="button" class="secondary">套用</button>
+          </div>
+          <p class="hint" id="custom-hint">點色塊開啟調色盤，或輸入色碼（例如 #3A6EA5）。</p>
+        </div>
+        <div class="palette-group" id="recent-group" hidden>
+          <p class="palette-name">最近自訂</p>
+          <div class="swatches" id="recent-swatches"></div>
+        </div>
       </fieldset>
 
       <fieldset class="group">
@@ -295,16 +337,58 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     { id: "mesh", name: "網狀" },
     { id: "multi", name: "多輻" },
   ];
-  const COLORS = [
-    { id: "gloss-black", name: "亮黑", hex: "#1c1d20" },
-    { id: "gunmetal", name: "鈦灰", hex: "#4a4f57" },
-    { id: "silver", name: "亮銀", hex: "#b9bec6" },
-    { id: "white", name: "白", hex: "#eceff2" },
-    { id: "bronze", name: "古銅", hex: "#7a5a32" },
-    { id: "champagne", name: "香檳金", hex: "#c8b07a" },
-    { id: "red", name: "賽道紅", hex: "#a8222a" },
-    { id: "custom", name: "自訂", hex: "#3a6ea5" },
+  // 調色盤：依色系分組（舊版的顏色代號保留，已存的選擇不會跑掉）
+  const PALETTE = [
+    { group: "黑・灰", colors: [
+      { id: "piano-black", name: "鋼琴黑", hex: "#0b0c0e" },
+      { id: "gloss-black", name: "亮黑", hex: "#1c1d20" },
+      { id: "satin-black", name: "緞面黑", hex: "#2a2c30" },
+      { id: "graphite", name: "石墨灰", hex: "#3a3d42" },
+      { id: "gunmetal", name: "鈦灰", hex: "#4a4f57" },
+      { id: "nardo", name: "水泥灰", hex: "#8a8f92" },
+    ] },
+    { group: "銀・白", colors: [
+      { id: "hyper-silver", name: "超級銀", hex: "#9ea4ad" },
+      { id: "silver", name: "亮銀", hex: "#b9bec6" },
+      { id: "liquid-silver", name: "液態銀", hex: "#d6dade" },
+      { id: "white", name: "白", hex: "#eceff2" },
+      { id: "pearl", name: "珍珠白", hex: "#f2eee6" },
+    ] },
+    { group: "金・銅", colors: [
+      { id: "matte-bronze", name: "暗銅", hex: "#5e4a2e" },
+      { id: "bronze", name: "古銅", hex: "#7a5a32" },
+      { id: "copper", name: "紅銅", hex: "#a0522d" },
+      { id: "rose-gold", name: "玫瑰金", hex: "#c58f7d" },
+      { id: "champagne", name: "香檳金", hex: "#c8b07a" },
+      { id: "gold", name: "金", hex: "#c9a227" },
+    ] },
+    { group: "紅・橘・黃", colors: [
+      { id: "wine", name: "酒紅", hex: "#6d1a24" },
+      { id: "red", name: "賽道紅", hex: "#a8222a" },
+      { id: "candy-red", name: "糖果紅", hex: "#c8102e" },
+      { id: "orange", name: "熔岩橘", hex: "#e2581b" },
+      { id: "yellow", name: "競技黃", hex: "#f2c230" },
+    ] },
+    { group: "藍", colors: [
+      { id: "navy", name: "海軍藍", hex: "#1f2f57" },
+      { id: "royal", name: "寶藍", hex: "#2348a8" },
+      { id: "sky", name: "天空藍", hex: "#5aa0d8" },
+    ] },
+    { group: "綠", colors: [
+      { id: "teal", name: "湖水綠", hex: "#1f8a8a" },
+      { id: "british-green", name: "英國綠", hex: "#1e3d2f" },
+      { id: "army", name: "軍綠", hex: "#4b5a3a" },
+      { id: "lime", name: "萊姆綠", hex: "#8bc34a" },
+    ] },
+    { group: "紫・粉", colors: [
+      { id: "purple", name: "午夜紫", hex: "#3d2a5c" },
+      { id: "violet", name: "紫羅蘭", hex: "#7b4fb3" },
+      { id: "pink", name: "櫻花粉", hex: "#e8a0b4" },
+    ] },
   ];
+  const COLORS = PALETTE.flatMap(g => g.colors).concat([{ id: "custom", name: "自訂", hex: "#3a6ea5" }]);
+  const HEX_RE = /^#[0-9a-f]{6}$/i;
+  const RECENT_MAX = 8;
   const FINISHES = [
     { id: "gloss", name: "亮面" },
     { id: "matte", name: "消光" },
@@ -313,7 +397,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
   const state = {
     size: 18, j: 8.5, pcd: "5H114.3", cb: 73.1, et: 35, style: "claw5", forge: "mono",
-    color: "gunmetal", finish: "gloss", custom: "#3a6ea5",
+    color: "gunmetal", finish: "gloss", custom: "#3a6ea5", recent: [],
   };
   const CB_MIN = 50, CB_MAX = 120;
 
@@ -331,7 +415,8 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
       if (FORGES.some(f => f.id === saved.forge)) state.forge = saved.forge;
       if (COLORS.some(c => c.id === saved.color)) state.color = saved.color;
       if (FINISHES.some(f => f.id === saved.finish)) state.finish = saved.finish;
-      if (/^#[0-9a-f]{6}$/i.test(saved.custom || "")) state.custom = saved.custom;
+      if (HEX_RE.test(saved.custom || "")) state.custom = saved.custom;
+      if (Array.isArray(saved.recent)) state.recent = saved.recent.filter(h => HEX_RE.test(h)).slice(0, RECENT_MAX);
     }
   } catch (e) { /* 無法讀取時用預設值 */ }
 
@@ -369,9 +454,35 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   FORGES.forEach(f => forgeChips.append(chip("forge", f.id, f.name, f.id === state.forge)));
   const styleChips = document.getElementById("style-chips");
   STYLES.forEach(s => styleChips.append(chip("style", s.id, s.name, s.id === state.style)));
-  const colorChips = document.getElementById("color-chips");
-  COLORS.forEach(c => colorChips.append(chip("color", c.id, c.name, c.id === state.color,
-    { swatch: c.id === "custom" ? state.custom : c.hex, swatchId: c.id === "custom" ? "custom-swatch" : null })));
+  // 調色盤色塊（單選）；「自訂」用隱藏的單選代表，由自訂調色區切換
+  const paletteEl = document.getElementById("palette");
+  function swatchRadio(c) {
+    const wrap = document.createElement("label");
+    wrap.className = "sw"; wrap.title = c.name;
+    const input = document.createElement("input");
+    input.type = "radio"; input.name = "color"; input.value = c.id; input.id = "color-" + c.id;
+    input.checked = c.id === state.color;
+    input.setAttribute("aria-label", c.name);
+    const dot = document.createElement("span");
+    dot.className = "dot"; dot.style.background = c.hex;
+    wrap.append(input, dot);
+    return wrap;
+  }
+  PALETTE.forEach(g => {
+    const box = document.createElement("div");
+    box.className = "palette-group";
+    const name = document.createElement("p");
+    name.className = "palette-name"; name.textContent = g.group;
+    const row = document.createElement("div");
+    row.className = "swatches";
+    g.colors.forEach(c => row.append(swatchRadio(c)));
+    box.append(name, row);
+    paletteEl.append(box);
+  });
+  const customRadio = document.createElement("input");
+  customRadio.type = "radio"; customRadio.name = "color"; customRadio.value = "custom";
+  customRadio.id = "color-custom"; customRadio.hidden = true; customRadio.checked = state.color === "custom";
+  paletteEl.append(customRadio);
   const finishChips = document.getElementById("finish-chips");
   FINISHES.forEach(f => finishChips.append(chip("finish", f.id, f.name, f.id === state.finish)));
 
@@ -422,14 +533,61 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     update();
   });
   etInput.addEventListener("input", () => { state.et = Number(etInput.value); update(); });
-  customInput.addEventListener("input", () => {
-    state.custom = customInput.value;
-    state.color = "custom";
-    document.getElementById("color-custom").checked = true;
-    document.getElementById("custom-swatch").style.background = state.custom;
-    update();
-  });
+  // ----- 自訂調色：調色盤、色碼輸入、最近自訂 -----
+  const hexInput = document.getElementById("custom-hex");
+  const customHint = document.getElementById("custom-hint");
+  const CUSTOM_HINT_TEXT = customHint.textContent;
+  const recentGroup = document.getElementById("recent-group");
+  const recentEl = document.getElementById("recent-swatches");
+  hexInput.value = state.custom.toUpperCase();
 
+  function renderRecent() {
+    recentEl.replaceChildren(...state.recent.map(h => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "recent-btn"; b.style.background = h;
+      b.title = h.toUpperCase(); b.setAttribute("aria-label", "套用 " + h.toUpperCase());
+      b.addEventListener("click", () => applyCustom(h, false));
+      return b;
+    }));
+    recentGroup.hidden = state.recent.length === 0;
+  }
+  function remember(hex) {
+    hex = hex.toLowerCase();
+    state.recent = [hex].concat(state.recent.filter(h => h !== hex)).slice(0, RECENT_MAX);
+    renderRecent();
+  }
+  function applyCustom(hex, addToRecent) {
+    state.custom = hex.toLowerCase();
+    state.color = "custom";
+    customRadio.checked = true;
+    customInput.value = state.custom;
+    hexInput.value = state.custom.toUpperCase();
+    hexInput.removeAttribute("aria-invalid");
+    customHint.textContent = CUSTOM_HINT_TEXT; customHint.className = "hint";
+    if (addToRecent) remember(state.custom);
+    update();
+  }
+  customInput.addEventListener("input", () => applyCustom(customInput.value, false)); // 拖動時即時預覽
+  customInput.addEventListener("change", () => applyCustom(customInput.value, true)); // 選定後記入最近自訂
+  function applyHexField() {
+    let v = hexInput.value.trim();
+    if (v && v[0] !== "#") v = "#" + v;
+    if (/^#[0-9a-f]{3}$/i.test(v)) v = "#" + v.slice(1).split("").map(ch => ch + ch).join("");
+    if (!HEX_RE.test(v)) {
+      hexInput.setAttribute("aria-invalid", "true");
+      customHint.textContent = "色碼格式是 # 加 6 位 0-9、A-F，例如 #3A6EA5。";
+      customHint.className = "hint warn";
+      return;
+    }
+    applyCustom(v, true);
+  }
+  document.getElementById("custom-apply").addEventListener("click", applyHexField);
+  hexInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); applyHexField(); } });
+  renderRecent();
+
+  function colorName() {
+    return state.color === "custom" ? "自訂 " + state.custom.toUpperCase() : COLORS.find(c => c.id === state.color).name;
+  }
   function currentColor() {
     return state.color === "custom" ? state.custom : COLORS.find(c => c.id === state.color).hex;
   }
@@ -440,7 +598,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   function specSub() {
     const style = STYLES.find(s => s.id === state.style).name;
     const forge = FORGES.find(f => f.id === state.forge).name;
-    const color = state.color === "custom" ? "自訂 " + state.custom.toUpperCase() : COLORS.find(c => c.id === state.color).name;
+    const color = colorName();
     const finish = FINISHES.find(f => f.id === state.finish).name;
     return forge + "・" + style + "・" + color + "・" + finish;
   }
@@ -876,6 +1034,9 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   function update() {
     document.getElementById("spec-code").textContent = specCode();
     document.getElementById("spec-sub").textContent = specSub();
+    document.getElementById("color-current-swatch").style.background = currentColor();
+    document.getElementById("color-current-name").textContent = state.color === "custom" ? "自訂" : colorName();
+    document.getElementById("color-current-hex").textContent = currentColor().toUpperCase();
     document.getElementById("forge-hint").textContent = FORGES.find(f => f.id === state.forge).hint;
     updateEt();
     draw();
