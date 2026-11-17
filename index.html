@@ -129,6 +129,11 @@ canvas:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
 .chip input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 2px; }
 .swatch { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line); flex: none; }
 
+.forge-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.forge-chip span { flex-direction: column; justify-content: center; gap: 4px; padding: 8px 6px; height: 100%; text-align: center; }
+.forge-parts { color: var(--muted); font-size: 0.75rem; line-height: 1.3; }
+.forge-parts .nowrap { white-space: nowrap; display: inline; padding: 0; min-height: 0; border: 0; background: none; }
+.forge-chip img.diagram { width: 100%; max-width: 150px; aspect-ratio: 1 / 1; height: auto; object-fit: contain; display: block; pointer-events: none; }
 .style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
 .style-chip span { flex-direction: column; justify-content: center; gap: 4px; padding: 8px 6px; height: 100%; text-align: center; }
 .style-chip canvas.thumb { border-radius: 50%; width: 64px; height: 64px; max-width: 100%; aspect-ratio: 1 / 1; cursor: pointer; touch-action: auto; display: block; }
@@ -275,7 +280,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
       <fieldset class="group">
         <legend>鍛造工法</legend>
-        <div class="chips" id="forge-chips"></div>
+        <div class="forge-grid" id="forge-chips"></div>
         <p class="hint" id="forge-hint"></p>
       </fieldset>
 
@@ -325,7 +330,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   const FORGES = [
     { id: "mono", name: "單片鍛造", hint: "整顆由一塊鋁錠鍛造，最輕、剛性最好，尺寸規格在鍛造後即固定。" },
     { id: "two", name: "雙片鍛造", hint: "輪面與輪桶分開製作再接合，J 值與 ET 可彈性搭配，輪面外圈可見一圈接合螺絲。" },
-    { id: "three", name: "三片鍛造", hint: "輪面、外唇、內桶三件組合，J 值與 ET 調整最自由，維修可單換外唇；重量與價格較高。" },
+    { id: "three", name: "三片鍛造", hint: "外唇、中盤、後桶三件組合，J 值與 ET 調整最自由，維修可單換外唇；重量與價格較高。" },
   ];
   const STYLES = [
     { id: "claw3", name: "三爪", spokes: 3 },
@@ -468,7 +473,28 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   const cbChips = document.getElementById("cb-chips");
   CB_PRESETS.forEach(v => cbChips.append(chip("cb-preset", v, v.toFixed(1), v === state.cb)));
   const forgeChips = document.getElementById("forge-chips");
-  FORGES.forEach(f => forgeChips.append(chip("forge", f.id, f.name, f.id === state.forge)));
+  const FORGE_IMAGES = { mono: "單片鍛造分解圖：一體成形的鋁圈", two: "雙片鍛造分解圖：輪面與輪桶", three: "三片鍛造分解圖：前方外唇、中盤、後桶" };
+  FORGES.forEach(f => {
+    const c = chip("forge", f.id, f.name, f.id === state.forge);
+    c.classList.add("forge-chip");
+    const parts = document.createElement("small");
+    parts.className = "forge-parts";
+    // 每個零件名稱不拆開，只在「＋」前換行
+    ({ mono: ["一體成形"], two: ["輪面", "輪桶"], three: ["外唇", "中盤", "後桶"] })[f.id].forEach((name, i) => {
+      const seg = document.createElement("span");
+      seg.className = "nowrap";
+      seg.textContent = (i ? "＋" : "") + name;
+      parts.append(seg);
+    });
+    c.querySelector("span").append(parts);
+    const img = document.createElement("img");
+    img.className = "diagram"; img.src = "images/forge-" + f.id + ".png";
+    img.alt = FORGE_IMAGES[f.id];
+    [img.width, img.height] = { mono: [288, 293], two: [346, 337], three: [401, 392] }[f.id];
+    img.decoding = "async"; img.draggable = false;
+    c.querySelector("span").prepend(img);
+    forgeChips.append(c);
+  });
   const styleChips = document.getElementById("style-chips");
   const thumbs = []; // 款式縮圖的畫布
   STYLES.forEach(s => {
@@ -899,6 +925,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
       state.style = styleNow;
     }
   }
+
   function queueThumbs() {
     if (thumbQueued) return;
     thumbQueued = true;
@@ -971,6 +998,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     if (state.forge === "three") {
       ring(rLipIn - mm(1), rLipIn + mm(1)); ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fill(); // 外唇接縫
     }
+
 
     // 3. 內桶（上方受光、下方陰影）
     const barrel = ctx.createLinearGradient(0, -rLipIn, 0, rLipIn);

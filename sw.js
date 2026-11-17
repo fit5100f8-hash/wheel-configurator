@@ -1,7 +1,7 @@
 // 鋁圈客製化 PWA 的 service worker
 // 頁面：先上網拿最新版，離線時用快取；圖示等靜態檔：快取優先；Google 字型：用過就快取，離線也能顯示。
 // 修改 index.html 或圖示後，請把 VERSION 加 1，讓舊快取被清掉。
-const VERSION = "v5";
+const VERSION = "v6";
 const APP_CACHE = "wheel-app-" + VERSION;
 const FONT_CACHE = "wheel-fonts-" + VERSION;
 
@@ -14,6 +14,9 @@ const APP_SHELL = [
   "./icons/icon-maskable-512.png",
   "./icons/apple-touch-icon.png",
   "./icons/favicon-32.png",
+  "./images/forge-mono.png",
+  "./images/forge-two.png",
+  "./images/forge-three.png",
 ];
 
 self.addEventListener("install", event => {
