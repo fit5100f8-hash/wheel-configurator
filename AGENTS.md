@@ -2,7 +2,7 @@
 
 ## Project Structure
 
-This repository contains a single-page wheel (鋁圈) configurator. Everything lives in `index.html`: inline CSS, inline JavaScript, and a canvas renderer that draws the wheel preview to scale (tire diameter fixed at about 650 mm; bolt circle, center bore, and barrel width derived from PCD, CB, and J). The only external resource is Google Fonts. It is published with GitHub Pages from the root of `main`.
+This repository contains a single-page wheel (鋁圈) configurator. The page lives in `index.html` (inline CSS and JavaScript). The large preview is a canvas that draws `images/preview/{mono,two,three}-{style}.webp` for the selected forging method and style, with zoom and pan; the ET diagram's barrel width is derived from J. The only external resource is Google Fonts. It is published with GitHub Pages from the root of `main`.
 
 It is also a PWA: `manifest.webmanifest` (relative `start_url`/`scope` so it works under the `/wheel-configurator/` Pages path), `sw.js` (network-first for the page, cache-first for same-origin assets, cached Google Fonts), and icons in `icons/`. Bump `VERSION` in `sw.js` whenever `index.html` or an icon changes so old caches are cleared.
 
