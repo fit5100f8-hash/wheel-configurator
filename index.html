@@ -136,7 +136,7 @@ canvas:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
 .forge-chip img.diagram { width: 100%; max-width: 150px; aspect-ratio: 1 / 1; height: auto; object-fit: contain; display: block; pointer-events: none; }
 .style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
 .style-chip span { flex-direction: column; justify-content: center; gap: 4px; padding: 8px 6px; height: 100%; text-align: center; }
-.style-chip canvas.thumb { border-radius: 50%; width: 64px; height: 64px; max-width: 100%; aspect-ratio: 1 / 1; cursor: pointer; touch-action: auto; display: block; }
+.style-chip img.thumb { width: 76px; max-width: 100%; height: auto; aspect-ratio: 150 / 147; object-fit: contain; display: block; pointer-events: none; }
 .chips.small .chip span { min-height: 40px; padding: 6px 10px; font-size: 0.9rem; }
 .cb-row { display: flex; align-items: center; gap: 8px; }
 .cb-row input {
@@ -496,17 +496,24 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     forgeChips.append(c);
   });
   const styleChips = document.getElementById("style-chips");
-  const thumbs = []; // 款式縮圖的畫布
+  // 款式圖：依目前的鍛造工法顯示（images/styles/工法-款式.webp）
+  const styleImgs = [];
   STYLES.forEach(s => {
     const c = chip("style", s.id, s.name, s.id === state.style);
     c.classList.add("style-chip");
-    const cv = document.createElement("canvas");
-    cv.className = "thumb"; cv.width = 128; cv.height = 128;
-    cv.setAttribute("aria-hidden", "true");
-    c.querySelector("span").prepend(cv);
-    thumbs.push({ id: s.id, cv });
+    const img = document.createElement("img");
+    img.className = "thumb"; img.width = 150; img.height = 147;
+    img.alt = ""; img.decoding = "async"; img.loading = "lazy"; img.draggable = false;
+    c.querySelector("span").prepend(img);
+    styleImgs.push({ id: s.id, img });
     styleChips.append(c);
   });
+  let styleImgForge = "";
+  function updateStyleImages() {
+    if (styleImgForge === state.forge) return;
+    styleImgForge = state.forge;
+    styleImgs.forEach(({ id, img }) => { img.src = "images/styles/" + state.forge + "-" + id + ".webp"; });
+  }
   // 調色盤色塊（單選）；「自訂」用隱藏的單選代表，由自訂調色區切換
   const paletteEl = document.getElementById("palette");
   function swatchRadio(c) {
@@ -681,7 +688,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
   // ---------- 繪製鋁圈（擬真版） ----------
   const canvas = document.getElementById("wheel");
-  let ctx = canvas.getContext("2d"); // 畫縮圖時會暫時換成縮圖的畫布
+  const ctx = canvas.getContext("2d");
   const TIRE_MM = 650;   // 輪胎外徑示意（mm）
   const INCH = 25.4;
   const LIGHT = [-0.55, -0.83]; // 光源方向：左上
@@ -901,35 +908,6 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   function draw() {
     resize();
     renderWheel(canvas.width, view.zoom, view.panX, view.panY);
-  }
-
-  // ---------- 款式縮圖：用同一套擬真繪圖，畫出每個款式在目前顏色／處理下的樣子 ----------
-  let thumbKey = "", thumbQueued = false;
-  function drawThumbs() {
-    thumbQueued = false;
-    const key = [state.color, state.custom, state.finish, state.forge, state.size, state.pcd, state.cb].join("|");
-    if (key === thumbKey) return; // 只有會影響外觀的選項改變才重畫
-    thumbKey = key;
-    const mainCtx = ctx, styleNow = state.style;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    try {
-      thumbs.forEach(({ id, cv }) => {
-        const size = Math.round((cv.clientWidth || 64) * dpr);
-        if (cv.width !== size) { cv.width = size; cv.height = size; }
-        ctx = cv.getContext("2d");
-        state.style = id;
-        renderWheel(size, 1.32, 0, 0); // 放大到輪框填滿縮圖
-      });
-    } finally {
-      ctx = mainCtx;
-      state.style = styleNow;
-    }
-  }
-
-  function queueThumbs() {
-    if (thumbQueued) return;
-    thumbQueued = true;
-    requestAnimationFrame(drawThumbs);
   }
 
   function renderWheel(W, zoom, panX, panY) {
@@ -1231,7 +1209,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     document.getElementById("finish-hint").textContent = FINISH_HINTS[state.finish] || "";
     updateEt();
     draw();
-    queueThumbs();
+    updateStyleImages();
     save();
   }
 
