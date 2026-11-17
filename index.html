@@ -490,7 +490,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     const img = document.createElement("img");
     img.className = "diagram"; img.src = "images/forge-" + f.id + ".png";
     img.alt = FORGE_IMAGES[f.id];
-    [img.width, img.height] = { mono: [288, 294], two: [346, 337], three: [401, 393] }[f.id];
+    [img.width, img.height] = { mono: [288, 293], two: [346, 337], three: [401, 392] }[f.id];
     img.decoding = "async"; img.draggable = false;
     c.querySelector("span").prepend(img);
     forgeChips.append(c);
